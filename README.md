@@ -62,14 +62,6 @@ app/src/main/java/com/jiyixia/app/
 └── widget/
     └── QuickRecordWidget.kt   # 桌面快捷记账 Widget
 ```
-
-## 🔧 编译运行
-
-1. 用 Android Studio 打开本项目
-2. 等 Gradle sync 完成
-3. 连接安卓设备或启动模拟器（Android 7.0+）
-4. 点击 Run
-
 **环境要求：**
 - Android Studio Hedgehog | 2023.1.1+
 - JDK 17
