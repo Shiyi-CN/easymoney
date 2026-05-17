@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">记一下</string>
+    <string name="tab_home">首页</string>
+    <string name="tab_stats">统计</string>
+    <string name="tab_settings">设置</string>
+    <string name="record_expense">支出</string>
+    <string name="record_income">收入</string>
+    <string name="add_record">记一笔</string>
+    <string name="amount_hint">0.00</string>
+    <string name="note_hint">备注（选填）</string>
+    <string name="confirm">确认</string>
+    <string name="cancel">取消</string>
+    <string name="delete">删除</string>
+    <string name="edit">编辑</string>
+    <string name="export_csv">导出 CSV</string>
+    <string name="export_success">已导出到 Downloads</string>
+    <string name="notification_listener_title">待确认通知</string>
+    <string name="notification_listener_desc">有新记录需要确认时在通知栏提醒</string>
+    <string name="no_records">还没有记录，记一笔吧</string>
+    <string name="category_food">餐饮</string>
+    <string name="category_transport">交通</string>
+    <string name="category_shopping">购物</string>
+    <string name="category_entertainment">娱乐</string>
+    <string name="category_housing">居住</string>
+    <string name="category_medical">医疗</string>
+    <string name="category_education">教育</string>
+    <string name="category_other">其他</string>
+    <string name="category_salary">工资</string>
+    <string name="category_bonus">奖金</string>
+    <string name="category_investment">理财</string>
+    <string name="category_parttime">兼职</string>
+    <string name="category_redpacket">红包</string>
+    <string name="monthly_overview">月度概览</string>
+    <string name="total_expense">总支出</string>
+    <string name="total_income">总收入</string>
+    <string name="balance">结余</string>
+    <string name="widget_quick_record">快速记账</string>
+    <string name="pending_confirm">待确认</string>
+    <string name="pending_confirm_count">%d 笔记录待确认</string>
+</resources>
