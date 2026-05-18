@@ -8,6 +8,7 @@ import com.jiyixia.app.JiYiXiaApp
 import com.jiyixia.app.data.entity.Record
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class PaymentNotificationListener : NotificationListenerService() {
