@@ -8,12 +8,15 @@ import android.provider.Settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.jiyixia.app.JiYiXiaApp
 import com.jiyixia.app.data.entity.Record
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileWriter
@@ -23,6 +26,7 @@ import java.util.*
 @Composable
 fun SettingsScreen() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var exportMsg by remember { mutableStateOf("") }
 
     Column(
@@ -40,7 +44,7 @@ fun SettingsScreen() {
         OutlinedButton(
             onClick = {
                 val app = context.applicationContext as JiYiXiaApp
-                kotlinx.coroutines.MainScope().launch {
+                scope.launch {
                     exportMsg = exportCsv(app) ?: "导出失败"
                 }
             },
