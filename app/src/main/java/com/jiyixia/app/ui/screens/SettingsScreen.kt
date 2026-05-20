@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
+import com.jiyixia.app.BuildConfig
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -259,7 +260,7 @@ fun SettingsScreen() {
             SettingsRow(
                 iconBg = Color(0xFFE8F5EE), icon = "ℹ️",
                 title = "版本",
-                desc = "记一下 v1.0.1 · 轻量记账，支付即记账"
+                desc = "记一下 v${BuildConfig.VERSION_NAME} · 轻量记账，支付即记账"
             )
         }
 
