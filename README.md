@@ -7,18 +7,14 @@
 ## ✨ 核心特性
 
 - 🚀 **2 步记账** — 桌面 Widget / FAB → 输入金额 → 选分类 → 完成
-- 🔔 **支付自动识别** — 监听支付宝/微信/银行扣款通知，自动解析金额和商户，本地关键词匹配分类
-- ⚠️ **待确认机制** — 低置信度记录标记为"待确认"，通知栏持续提醒，不催你当场改，但不让你忘掉
+- 🎤 **语音记账** — 说"午餐 38"自动填金额+分类，支持"打车 25 块 5"等多种口语
+- 🧾 **报销管理** — 标记可报销→已报销，关联报销对象（XX公司/XX人），统计页待报销汇总
+- 🔔 **支付自动识别** — 监听支付宝/微信/银行/云闪付通知，自动解析金额和商户，支持收入识别
+- ⚠️ **待确认机制** — 低置信度记录标记为"待确认"，通知栏持续提醒
 - 📊 **月度环形图** — 纯 Compose Canvas 手绘，零第三方图表库
-- 📤 **CSV 导出** — 一键导出到 Downloads，Excel/WPS 可直接打开
-- 🎨 **Material You** — 适配 Android 12+ 动态取色，跟随系统主题自动切换深色/浅色
-- 🔒 **纯本地** — 不声明网络权限，数据不离开设备
-
-## 📸 界面预览
-
-| 首页 - 记录列表 | 统计 - 月度概览 | 设置 |
-|:---:|:---:|:---:|
-| 记录按日期分组，待确认黄色标记 | 收支概览 + 分类环形图 | CSV导出 + 通知权限 |
+- 📤 **CSV 导出** — 一键导出到 Downloads
+- 🎨 **Material You** — 适配 Android 12+ 动态取色
+- 🔒 **纯本地优先** — 语音识别优先离线，数据不离开设备
 
 ## 🛠 技术栈
 
@@ -26,53 +22,20 @@
 |------|------|
 | 语言 | Kotlin |
 | UI | Jetpack Compose + Material 3 |
-| 数据库 | Room + SQLite |
+| 数据库 | Room + SQLite (v4 migration) |
 | 图表 | Compose Canvas（自绘） |
 | 导航 | Navigation Compose |
-| 架构 | MVVM（ViewModel + Repository + Room） |
-| 异步 | Kotlin Coroutines + Flow |
+| 架构 | MVVM（ViewModel + Repository） |
+| 语音 | Android SpeechRecognizer（优先离线） |
 | Widget | Glance AppWidget |
-| 通知监听 | NotificationListenerService（事件驱动） |
+| 通知监听 | NotificationListenerService |
 
-## 📁 项目结构
+## 📋 迭代进度
 
-```
-app/src/main/java/com/jiyixia/app/
-├── JiYiXiaApp.kt              # Application（初始化预设分类）
-├── data/
-│   ├── entity/Entities.kt     # Room 实体（Record + Category）
-│   ├── dao/Daos.kt            # DAO（含分类汇总查询）
-│   ├── AppDatabase.kt         # Room 数据库单例
-│   └── PresetCategories.kt    # 预设分类数据
-├── repository/
-│   └── RecordRepository.kt    # 数据仓库
-├── viewmodel/
-│   ├── ViewModels.kt          # HomeVM + StatsVM
-│   └── StatsViewModelFactory.kt
-├── ui/
-│   ├── MainActivity.kt        # 主 Activity + 底部导航
-│   ├── navigation/Screen.kt   # 路由定义
-│   ├── screens/
-│   │   ├── HomeScreen.kt      # 首页（列表+待确认+记账弹窗）
-│   │   ├── StatsScreen.kt     # 统计（概览+环形图）
-│   │   └── SettingsScreen.kt  # 设置（导出+通知权限）
-│   └── theme/                 # Material 3 主题
-├── service/
-│   └── PaymentNotificationListener.kt  # 支付通知识别
-└── widget/
-    └── QuickRecordWidget.kt   # 桌面快捷记账 Widget
-```
-**环境要求：**
-- Android Studio Hedgehog | 2023.1.1+
-- JDK 17
-- Android SDK 34
-- Kotlin 1.9.22
-
-## 📋 迭代计划
-
-- [x] **MVP** — 基础记账 + 月度环形图 + CSV 导出 + Widget + 通知监听
-- [ ] **v2** — 自定义分类 + 语音记账 + 年度趋势图 + 应用锁
-- [ ] **v3** — 惯性记账建议 + NFC 标签 + 拍照记账 + 预算提醒
+- [x] **v1.0** — 基础记账 + 月度环形图 + CSV 导出 + Widget + 通知监听
+- [x] **v1.1** — 语音记账 + 报销管理（待/已报销 + 报销对象）+ 报销统计 + 新图标
+- [ ] **v1.2** — 自定义分类 + 年度趋势图 + 应用锁 + 桌面宠物/植物 Widget 🌱
+- [ ] **v2.0** — 惯性记账建议 + NFC 标签 + 拍照记账 + 预算提醒
 
 ## 📄 许可
 
