@@ -177,6 +177,7 @@ fun HomeScreen(
     }
 
     if (showAddSheet) {
+        val activity = LocalContext.current as Activity
         AddRecordSheet(
             categories = expenseCategories,
             allCategories = uiState.categories,
@@ -186,7 +187,8 @@ fun HomeScreen(
                 vm.addRecord(amount, categoryId, note, type, isReimbursable = isReimbursable, reimbursementTarget = reimbursementTarget)
                 showAddSheet = false
             },
-            onDismiss = { showAddSheet = false }
+            onDismiss = { showAddSheet = false },
+            activity = activity
         )
     }
 }
@@ -527,7 +529,8 @@ private fun AddRecordSheet(
     selectedType: Int,
     onTypeChange: (Int) -> Unit,
     onConfirm: (amount: Double, categoryId: Long, note: String, type: Int, isReimbursable: Boolean, reimbursementTarget: String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    activity: Activity
 ) {
     val context = LocalContext.current
 
@@ -693,13 +696,13 @@ private fun AddRecordSheet(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(bg)
                             .clickable {
                                 currentType = type
                                 onTypeChange(type)
                                 if (type == 1) isReimbursable = false
                             }
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(bg)
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -749,17 +752,11 @@ private fun AddRecordSheet(
                             voiceError = null
                             voiceManager.startListening()
                         } else {
-                            // 使用传统 requestPermissions（兼容小米/国产ROM）
-                            val activity = context as? Activity
-                            if (activity != null) {
-                                ActivityCompat.requestPermissions(
-                                    activity,
-                                    arrayOf(Manifest.permission.RECORD_AUDIO),
-                                    VoicePermissionBridge.REQUEST_CODE
-                                )
-                            } else {
-                                voiceError = "无法请求录音权限"
-                            }
+                            ActivityCompat.requestPermissions(
+                                activity,
+                                arrayOf(Manifest.permission.RECORD_AUDIO),
+                                VoicePermissionBridge.REQUEST_CODE
+                            )
                         }
                     }
                 }
@@ -801,12 +798,13 @@ private fun AddRecordSheet(
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
+                                        .heightIn(min = 52.dp)
+                                        .clickable { selectedCategoryId = cat.id }
                                         .clip(RoundedCornerShape(10.dp))
                                         .background(
                                             if (isSelected) MaterialTheme.colorScheme.primaryContainer
                                             else Surface2
                                         )
-                                        .clickable { selectedCategoryId = cat.id }
                                         .padding(vertical = 8.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
