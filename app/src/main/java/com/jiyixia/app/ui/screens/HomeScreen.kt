@@ -1,11 +1,10 @@
 package com.jiyixia.app.ui.screens
 
-import android.Manifest
 import android.app.Activity
 import android.app.Application
-import android.content.pm.PackageManager
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -24,7 +23,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +39,7 @@ import com.jiyixia.app.util.VoiceCategorizer
 import com.jiyixia.app.util.VoicePermissionBridge
 import com.jiyixia.app.util.VoiceRecognitionManager
 import com.jiyixia.app.viewmodel.HomeViewModel
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -68,6 +67,28 @@ private fun formatDateGroup(dateStr: String): String {
             else -> dispSdf.format(d)
         }
     } catch (e: Exception) { dateStr }
+}
+
+// ── 设备品牌检测（用于语音引擎兼容引导）──────────────────────────────────
+/** 根据设备品牌返回系统语音引擎的麦克风权限开启指引 */
+private fun getVoicePermissionGuide(): String {
+    val m = Build.MANUFACTURER.lowercase()
+    return when {
+        m.contains("xiaomi") || m.contains("redmi") ->
+            "📱 小米设备：设置→应用管理→右上角⋮→显示所有应用→搜「小爱同学」→权限→开启麦克风"
+        m.contains("huawei") || Build.BRAND.lowercase().contains("honor") ->
+            "📱 华为/荣耀：设置→应用→小艺→权限→开启麦克风"
+        m.contains("oppo") || m.contains("realme") ->
+            "📱 OPPO/真我：设置→应用→Breeno（小布助手）→权限→开启麦克风"
+        m.contains("vivo") || m.contains("iqoo") ->
+            "📱 vivo/iQOO：设置→应用与权限→应用管理→右上角⋮→显示系统→搜「Jovi」→权限→开启麦克风"
+        m.contains("samsung") ->
+            "📱 三星：设置→应用程序→搜索「Google」→语音服务→权限→开启麦克风"
+        m.contains("oneplus") ->
+            "📱 一加：设置→应用→语音引擎→权限→开启麦克风"
+        else ->
+            "⚠️ 语音未完成。请确保系统语音助手（长按Home键的那个）已获得麦克风权限"
+    }
 }
 
 private fun formatAmount(amount: Double, type: Int): String {
@@ -177,7 +198,6 @@ fun HomeScreen(
     }
 
     if (showAddSheet) {
-        val activity = LocalContext.current as Activity
         AddRecordSheet(
             categories = expenseCategories,
             allCategories = uiState.categories,
@@ -187,8 +207,7 @@ fun HomeScreen(
                 vm.addRecord(amount, categoryId, note, type, isReimbursable = isReimbursable, reimbursementTarget = reimbursementTarget)
                 showAddSheet = false
             },
-            onDismiss = { showAddSheet = false },
-            activity = activity
+            onDismiss = { showAddSheet = false }
         )
     }
 }
@@ -529,10 +548,8 @@ private fun AddRecordSheet(
     selectedType: Int,
     onTypeChange: (Int) -> Unit,
     onConfirm: (amount: Double, categoryId: Long, note: String, type: Int, isReimbursable: Boolean, reimbursementTarget: String) -> Unit,
-    onDismiss: () -> Unit,
-    activity: Activity
+    onDismiss: () -> Unit
 ) {
-    val context = LocalContext.current
 
     var amountText by remember { mutableStateOf("") }
     var selectedCategoryId by remember { mutableStateOf(categories.firstOrNull()?.id ?: 0L) }
@@ -541,104 +558,122 @@ private fun AddRecordSheet(
     var isReimbursable by remember { mutableStateOf(false) }
     var reimbursementTarget by remember { mutableStateOf("") }
 
-    // ── 语音识别状态 ──
-    val voiceManager = remember { VoiceRecognitionManager(context) }
-    var isListening by remember { mutableStateOf(false) }
+    // ── 语音识别状态（Intent 弹窗模式）──
+    val activityContext = LocalContext.current
+    val voiceManager = remember { VoiceRecognitionManager(activityContext) }
     var voiceError by remember { mutableStateOf<String?>(null) }
+    var showPermissionDeniedDialog by remember { mutableStateOf(false) }
+
+    // Flag：权限刚被授予，需要自动触发语音
+    var pendingVoiceLaunch by remember { mutableStateOf(false) }
 
     // 监听权限授予结果（通过 VoicePermissionBridge）
     LaunchedEffect(Unit) {
         VoicePermissionBridge.result.collect { granted ->
             if (granted == true) {
-                isListening = true
-                voiceError = null
-                voiceManager.startListening()
+                delay(500)
+                if (voiceManager.hasRecordPermission()) {
+                    voiceError = null
+                    pendingVoiceLaunch = true  // 触发语音启动
+                } else {
+                    voiceError = "麦克风权限未生效，请在系统设置中手动开启"
+                }
                 VoicePermissionBridge.reset()
             } else if (granted == false) {
-                voiceError = "需要录音权限才能使用语音输入"
+                if (voiceManager.isPermissionPermanentlyDenied()) {
+                    showPermissionDeniedDialog = true
+                } else {
+                    voiceError = "需要麦克风权限才能使用语音输入"
+                }
                 VoicePermissionBridge.reset()
             }
         }
     }
 
-    // 观察语音识别结果
-    LaunchedEffect(voiceManager) {
-        voiceManager.state.collect { state ->
-            when (state) {
-                is VoiceRecognitionManager.State.Idle -> {
-                    isListening = false
-                    voiceError = null
-                }
-                is VoiceRecognitionManager.State.Listening -> {
-                    isListening = true
-                    voiceError = null
-                }
-                is VoiceRecognitionManager.State.Result -> {
-                    isListening = false
-
-                    // 构建分类名称→ID映射
-                    val nameToId = allCategories.associate { it.name to it.id }
-
-                    // 解析语音文本
-                    val result = VoiceCategorizer.parse(
-                        text = state.text,
-                        categoryNameToId = nameToId,
-                        defaultCategoryId = categories.firstOrNull()?.id ?: 0L
-                    )
-
-                    if (result != null) {
-                        // 自动填充
-                        amountText = result.amountText
-                        if (result.categoryId > 0) {
-                            selectedCategoryId = result.categoryId
+    // 处理语音识别结果的通用方法
+    fun processVoiceText(text: String) {
+        val nameToId = allCategories.associate { it.name to it.id }
+        val parsed = VoiceCategorizer.parse(
+            text = text,
+            categoryNameToId = nameToId,
+            defaultCategoryId = categories.firstOrNull()?.id ?: 0L
+        )
+        if (parsed != null) {
+            amountText = parsed.amountText
+            if (parsed.categoryId > 0) selectedCategoryId = parsed.categoryId
+            if (parsed.note.isNotBlank()) noteText = parsed.note
+            if (parsed.isExpense && currentType != 0) { currentType = 0; onTypeChange(0) }
+            else if (!parsed.isExpense && currentType != 1) { currentType = 1; onTypeChange(1) }
+            // 报销标记
+            if (text.contains("报销")) {
+                isReimbursable = true
+                val targetRegex = Regex("""(.{1,8})(?:公司|单位|部门|人)?报销""")
+                val match = targetRegex.find(text)
+                if (match != null) {
+                    val raw = match.groupValues[1].trim()
+                    if (raw.isNotEmpty() && !raw.matches(Regex("""\d+""")) && raw !in setOf("的", "了", "要", "是", "可", "能")) {
+                        reimbursementTarget = when {
+                            match.value.contains("公司") -> "$raw 公司"
+                            match.value.contains("单位") -> "$raw 单位"
+                            match.value.contains("部门") -> "$raw 部门"
+                            else -> raw
                         }
-                        if (result.note.isNotBlank()) {
-                            noteText = result.note
-                        }
-                        // 根据结果切换收支类型
-                        if (result.isExpense && currentType != 0) {
-                            currentType = 0
-                            onTypeChange(0)
-                        } else if (!result.isExpense && currentType != 1) {
-                            currentType = 1
-                            onTypeChange(1)
-                        }
-                        // 语音中包含"报销"则自动标记为可报销
-                        if (state.text.contains("报销")) {
-                            isReimbursable = true
-                            // 提取报销对象：匹配"XX报销""XX公司报销""XX人报销"等
-                            val targetRegex = Regex("""(.{1,8})(?:公司|单位|部门|人)?报销""")
-                            val match = targetRegex.find(state.text)
-                            if (match != null) {
-                                val raw = match.groupValues[1].trim()
-                                // 过滤掉金额/分类等噪音
-                                if (raw.isNotEmpty() && !raw.matches(Regex("""\d+""")) && raw !in setOf("的", "了", "要", "是", "可", "能")) {
-                                    reimbursementTarget = if (match.value.contains("公司")) "$raw 公司"
-                                        else if (match.value.contains("单位")) "$raw 单位"
-                                        else if (match.value.contains("部门")) "$raw 部门"
-                                        else raw
-                                }
-                            }
-                        }
-                        voiceError = null
-                    } else {
-                        voiceError = "未能识别金额，请手动输入"
                     }
+                }
+            }
+            voiceError = null
+        } else {
+            voiceError = "未能识别金额，请手动输入"
+        }
+    }
 
-                    voiceManager.destroy()
-                }
-                is VoiceRecognitionManager.State.Error -> {
-                    isListening = false
-                    voiceError = state.message
-                    voiceManager.destroy()
-                }
+    // ── 语音识别结果 Launcher ──
+    val voiceResultLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val text = voiceManager.parseRecognitionResult(result.data)
+            if (text != null) {
+                processVoiceText(text)
+            } else {
+                voiceError = "未识别到语音内容，请重试"
+            }
+        } else if (result.resultCode == Activity.RESULT_CANCELED) {
+            // 系统语音引擎报错、权限不足、或用户取消
+            // 按设备品牌给出专属指引（覆盖小米/华为/OPPO/vivo/三星/一加等）
+            voiceError = getVoicePermissionGuide()
+        }
+    }
+
+    // 触发语音 Intent 的通用方法
+    fun launchVoice() {
+        // 前置检查：语音引擎是否可用
+        if (!voiceManager.isVoiceAvailable()) {
+            voiceError = voiceManager.getUnavailableGuide()
+            return
+        }
+        val activity = voiceManager.findActivity() ?: run {
+            voiceError = "无法启动语音输入"
+            return
+        }
+        try {
+            voiceResultLauncher.launch(voiceManager.createRecognitionIntent())
+        } catch (e: Exception) {
+            // 捕获 ActivityNotFoundException（无语音引擎）等异常
+            voiceError = if (e is android.content.ActivityNotFoundException) {
+                voiceManager.getUnavailableGuide()
+            } else {
+                "启动语音输入失败：${e.message}"
             }
         }
     }
 
-    // 组件销毁时清理
-    DisposableEffect(Unit) {
-        onDispose { voiceManager.destroy() }
+    // 权限授予后自动触发
+    LaunchedEffect(pendingVoiceLaunch) {
+        if (pendingVoiceLaunch) {
+            pendingVoiceLaunch = false
+            launchVoice()
+        }
     }
 
     // ── 按当前类型筛选要显示的分类 ──
@@ -738,25 +773,19 @@ private fun AddRecordSheet(
 
             // ── 语音输入入口 ──
             VoiceInputRow(
-                isListening = isListening,
                 voiceError = voiceError,
                 onClick = {
-                    if (isListening) {
-                        voiceManager.stopListening()
-                        voiceManager.destroy()
-                        isListening = false
-                        voiceError = null
+                    // 前置检查：引擎是否可用（在权限检查之前）
+                    if (!voiceManager.isVoiceAvailable()) {
+                        voiceError = voiceManager.getUnavailableGuide()
+                        return@VoiceInputRow
+                    }
+                    if (voiceManager.hasRecordPermission()) {
+                        launchVoice()
                     } else {
-                        if (voiceManager.hasRecordPermission()) {
-                            isListening = true
-                            voiceError = null
-                            voiceManager.startListening()
-                        } else {
-                            ActivityCompat.requestPermissions(
-                                activity,
-                                arrayOf(Manifest.permission.RECORD_AUDIO),
-                                VoicePermissionBridge.REQUEST_CODE
-                            )
+                        val requested = voiceManager.requestRecordPermission()
+                        if (!requested) {
+                            showPermissionDeniedDialog = true
                         }
                     }
                 }
@@ -882,50 +911,42 @@ private fun AddRecordSheet(
             }
         }
     }
+
+    // ── 权限被永久拒绝时的引导对话框 ──
+    if (showPermissionDeniedDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermissionDeniedDialog = false },
+            title = { Text("需要麦克风权限") },
+            text = { Text("语音记账需要麦克风权限才能录音。请前往系统设置 → 权限管理，手动开启「麦克风」权限。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPermissionDeniedDialog = false
+                    voiceManager.openAppSettings()
+                }) {
+                    Text("去设置")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPermissionDeniedDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  语音输入行（统一样式：空闲/聆听/错误）
+//  语音输入行（Intent 弹窗模式，系统对话框负责 UI）
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun VoiceInputRow(
-    isListening: Boolean,
     voiceError: String?,
     onClick: () -> Unit
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "voiceRow")
-
-    // 聆听时的波纹动画
-    val ringAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.25f, targetValue = 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "ringAlpha"
-    )
-
-    val bgColor = when {
-        isListening -> ExpenseRed.copy(alpha = 0.08f)
-        voiceError != null -> WarningOrangeBg
-        else -> Surface2
-    }
-
-    val iconEmoji = when {
-        isListening -> "⏹"
-        voiceError != null -> "⚠️"
-        else -> "🎤"
-    }
-    val labelText = when {
-        isListening -> "正在聆听，点击停止"
-        voiceError != null -> voiceError
-        else -> "语音输入（说\"午餐 38\"自动记账）"
-    }
-    val labelColor = when {
-        isListening -> ExpenseRed
-        voiceError != null -> WarningOrange
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    val bgColor = if (voiceError != null) WarningOrangeBg else Surface2
+    val iconEmoji = if (voiceError != null) "⚠️" else "🎤"
+    val labelText = voiceError ?: "语音输入（说\"午餐 38\"自动记账）"
+    val labelColor = if (voiceError != null) WarningOrange else MaterialTheme.colorScheme.onSurfaceVariant
 
     Row(
         modifier = Modifier
@@ -936,55 +957,24 @@ private fun VoiceInputRow(
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 左侧图标
         Box(
             modifier = Modifier
                 .size(40.dp)
                 .clip(CircleShape)
                 .background(
-                    when {
-                        isListening -> ExpenseRed.copy(alpha = 0.15f)
-                        voiceError != null -> WarningOrange.copy(alpha = 0.15f)
-                        else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
-                    }
+                    if (voiceError != null) WarningOrange.copy(alpha = 0.15f)
+                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
                 ),
             contentAlignment = Alignment.Center
         ) {
-            if (isListening) {
-                // 聆听时：波形条动画
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    repeat(4) { i ->
-                        val barH by infiniteTransition.animateFloat(
-                            initialValue = 6f, targetValue = 14f,
-                            animationSpec = infiniteRepeatable(
-                                animation = tween(350, delayMillis = i * 100, easing = FastOutSlowInEasing),
-                                repeatMode = RepeatMode.Reverse
-                            ),
-                            label = "bar$i"
-                        )
-                        Box(
-                            modifier = Modifier
-                                .width(3.dp)
-                                .height(barH.dp)
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(ExpenseRed)
-                        )
-                    }
-                }
-            } else {
-                Text(iconEmoji, fontSize = 16.sp)
-            }
+            Text(iconEmoji, fontSize = 16.sp)
         }
 
         Spacer(Modifier.width(12.dp))
 
-        // 文字标签
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                if (isListening) "正在聆听..." else if (voiceError != null) "识别失败" else "语音记账",
+                if (voiceError != null) "识别失败" else "语音记账",
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
                 color = labelColor
@@ -994,18 +984,6 @@ private fun VoiceInputRow(
                 labelText,
                 fontSize = 11.sp,
                 color = labelColor.copy(alpha = 0.7f)
-            )
-        }
-
-        // 右侧状态指示
-        if (isListening) {
-            // 扩散圆点
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .scale(1f + ringAlpha * 1.5f)
-                    .clip(CircleShape)
-                    .background(ExpenseRed.copy(alpha = ringAlpha + 0.3f))
             )
         }
     }

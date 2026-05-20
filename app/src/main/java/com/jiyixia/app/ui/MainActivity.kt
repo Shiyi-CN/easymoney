@@ -11,7 +11,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.core.content.ContextCompat
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -26,6 +25,7 @@ import com.jiyixia.app.ui.theme.JiYiXiaTheme
 import com.jiyixia.app.util.VoicePermissionBridge
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -36,6 +36,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * 权限请求回调 —— 语音权限的唯一回传通道
+     * VoiceRecognitionManager.requestRecordPermission() 使用
+     * ActivityCompat.requestPermissions() 发起请求，结果经此处回传至
+     * VoicePermissionBridge.result Flow，再由 HomeScreen 的 LaunchedEffect 消费。
+     */
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,

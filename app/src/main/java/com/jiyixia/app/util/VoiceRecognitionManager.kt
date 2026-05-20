@@ -1,49 +1,30 @@
 package com.jiyixia.app.util
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Bundle
-import android.speech.RecognitionListener
+import android.net.Uri
+import android.provider.Settings
 import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.receiveAsFlow
-import java.util.Locale
+import androidx.core.app.ActivityCompat
 
 /**
- * 语音识别管理器 —— 封装 Android 原生 SpeechRecognizer
+ * 语音识别管理器 —— 基于系统 Intent 弹窗模式
+ *
+ * 为什么不用 SpeechRecognizer 直接 API？
+ * - MIUI/HyperOS 上 SpeechRecognizer 服务即使权限已授权也会报
+ *   ERROR_INSUFFICIENT_PERMISSIONS，这是小米系统级限制
+ * - RecognizerIntent.ACTION_RECOGNIZE_SPEECH 走系统语音输入弹窗，
+ *   由系统内置引擎（小爱同学）处理，兼容性最好
  *
  * 设计要点：
- * - 优先使用离线识别（EXTRA_PREFER_OFFLINE）
- * - 中文普通话识别
- * - 通过 Flow 暴露识别结果，方便 Compose 集成
- * - 提供权限检查
+ * - createRecognitionIntent() 生成配置好的 Intent，由 UI 层通过
+ *   rememberLauncherForActivityResult 启动
+ * - parseRecognitionResult() 从返回 Intent 中提取识别文本
+ * - 内置权限请求（ActivityCompat + VoicePermissionBridge）
  */
 class VoiceRecognitionManager(private val context: Context) {
-
-    sealed class State {
-        /** 空闲，准备就绪 */
-        data object Idle : State()
-        /** 正在监听语音 */
-        data object Listening : State()
-        /** 识别完成 */
-        data class Result(val text: String) : State()
-        /** 出错 */
-        data class Error(val message: String) : State()
-    }
-
-    private var speechRecognizer: SpeechRecognizer? = null
-    private val _state = Channel<State>(Channel.CONFLATED)
-    val state: Flow<State> = _state.receiveAsFlow()
-
-    /**
-     * 检查设备是否支持语音识别
-     */
-    fun isRecognitionAvailable(): Boolean {
-        return SpeechRecognizer.isRecognitionAvailable(context)
-    }
 
     /**
      * 检查是否已授予录音权限
@@ -55,107 +36,132 @@ class VoiceRecognitionManager(private val context: Context) {
     }
 
     /**
-     * 开始监听语音
+     * 请求录音权限（走传统 ActivityCompat，兼容所有 ROM）
+     * 请求结果通过 VoicePermissionBridge.result → onRequestPermissionsResult 回传
+     *
+     * @return true 表示已发起请求或已有权限，false 表示找不到 Activity 无法请求
      */
-    fun startListening() {
-        // 先销毁旧实例
-        destroy()
+    fun requestRecordPermission(): Boolean {
+        if (hasRecordPermission()) return true
+        val activity = findActivity() ?: return false
+        ActivityCompat.requestPermissions(
+            activity,
+            arrayOf(android.Manifest.permission.RECORD_AUDIO),
+            VoicePermissionBridge.REQUEST_CODE
+        )
+        return true
+    }
 
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
-            setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {
-                    _state.trySend(State.Listening)
-                }
+    /**
+     * 检查用户是否勾选了"不再询问"（权限被永久拒绝）
+     * 必须在权限请求回调之后调用才有意义
+     */
+    fun isPermissionPermanentlyDenied(): Boolean {
+        val activity = findActivity() ?: return false
+        return !hasRecordPermission() &&
+                !ActivityCompat.shouldShowRequestPermissionRationale(
+                    activity, android.Manifest.permission.RECORD_AUDIO
+                )
+    }
 
-                override fun onBeginningOfSpeech() {
-                    // 用户开始说话
-                }
+    /**
+     * 打开应用设置页，让用户手动授予录音权限
+     */
+    fun openAppSettings() {
+        val activity = findActivity() ?: return
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", activity.packageName, null)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        activity.startActivity(intent)
+    }
 
-                override fun onRmsChanged(rmsdB: Float) {
-                    // 音量变化，可用于显示波形动画
-                }
+    /**
+     * 从 Context 链中找到 Activity
+     */
+    fun findActivity(): Activity? {
+        var ctx = context
+        while (ctx is android.content.ContextWrapper) {
+            if (ctx is Activity) return ctx
+            ctx = ctx.baseContext
+        }
+        return null
+    }
 
-                override fun onBufferReceived(buffer: ByteArray?) {}
-
-                override fun onEndOfSpeech() {
-                    // 用户停止说话
-                }
-
-                override fun onError(error: Int) {
-                    val msg = when (error) {
-                        SpeechRecognizer.ERROR_AUDIO -> "音频错误"
-                        SpeechRecognizer.ERROR_CLIENT -> "客户端错误"
-                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "缺少录音权限"
-                        SpeechRecognizer.ERROR_NETWORK -> "网络错误（语音识别需要联网）"
-                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "网络超时"
-                        SpeechRecognizer.ERROR_NO_MATCH -> "未识别到语音，请重试"
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "识别引擎忙，请稍后"
-                        SpeechRecognizer.ERROR_SERVER -> "服务器错误"
-                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "语音超时，请再说一遍"
-                        else -> "识别失败 (错误码: $error)"
-                    }
-                    _state.trySend(State.Error(msg))
-                }
-
-                override fun onResults(results: Bundle?) {
-                    val matches = results?.getStringArrayList(
-                        SpeechRecognizer.RESULTS_RECOGNITION
-                    )
-                    val text = matches?.firstOrNull() ?: ""
-                    if (text.isNotBlank()) {
-                        _state.trySend(State.Result(text))
-                    } else {
-                        _state.trySend(State.Error("未识别到语音内容"))
-                    }
-                }
-
-                override fun onPartialResults(partialResults: Bundle?) {
-                    // 部分结果，可用于实时显示
-                }
-
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
-
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                // 语言：中文普通话
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "zh-CN")
-
-                // 优先离线识别
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-
-                // 部分结果
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-
-                // 最长静音检测时间
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000)
-
-                // 最大结果数
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            }
-
-            startListening(intent)
+    /**
+     * 检查设备是否支持语音识别（是否有可用的语音引擎）
+     * 使用 PackageManager 查询，兼容所有 Android 版本
+     * 部分国产 ROM 可能未预装 Google 语音服务或系统引擎被禁用
+     */
+    fun isVoiceAvailable(): Boolean {
+        return try {
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            context.packageManager.queryIntentActivities(
+                intent, PackageManager.MATCH_DEFAULT_ONLY
+            ).isNotEmpty()
+        } catch (e: Exception) {
+            false
         }
     }
 
     /**
-     * 停止监听
+     * 获取语音引擎不可用时的用户引导文本
+     * 根据品牌给出安装/开启指引
      */
-    fun stopListening() {
-        speechRecognizer?.stopListening()
+    fun getUnavailableGuide(): String {
+        val m = android.os.Build.MANUFACTURER.lowercase()
+        val brand = android.os.Build.BRAND.lowercase()
+        return when {
+            m.contains("xiaomi") || m.contains("redmi") ->
+                "本机暂无可用语音引擎。请确保「小爱同学」App 已安装并更新到最新版本"
+            m.contains("huawei") || brand.contains("honor") ->
+                "本机暂无可用语音引擎。请确保「智慧语音」服务已开启（设置→智慧助手→智慧语音）"
+            m.contains("oppo") || m.contains("realme") ->
+                "本机暂无可用语音引擎。请确保 Breeno 语音已开启"
+            m.contains("vivo") || m.contains("iqoo") ->
+                "本机暂无可用语音引擎。请确保 Jovi 语音已开启"
+            m.contains("samsung") ->
+                "本机暂无可用语音引擎。请确保 Google 应用已安装并登录（三星使用 Google 语音服务）"
+            else ->
+                "本机暂无语音识别服务。请安装 Google 应用或确保系统语音助手已启用"
+        }
     }
 
     /**
-     * 销毁识别器实例，释放资源
+     * 创建语音识别 Intent —— 走系统语音输入弹窗
+     *
+     * 关键参数：
+     * - ACTION_RECOGNIZE_SPEECH：启动系统语音识别 UI
+     * - LANGUAGE_MODEL_FREE_FORM：自由格式，不限词表
+     * - EXTRA_LANGUAGE = "zh-CN"：中文普通话
+     * - 不使用 EXTRA_PREFER_OFFLINE：MIUI 离线识别不稳定，走在线
+     */
+    fun createRecognitionIntent(): Intent {
+        return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "zh-CN")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "说出金额和用途，如「午餐 38 元」")
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        }
+    }
+
+    /**
+     * 从 activity result 的 Intent 中提取识别文本
+     *
+     * @param data onActivityResult 返回的 Intent
+     * @return 识别出的文本，null 表示无结果
+     */
+    fun parseRecognitionResult(data: Intent?): String? {
+        val matches = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+        return matches?.firstOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * 释放资源（Intent 模式无持久资源，保留用于 API 兼容）
      */
     fun destroy() {
-        speechRecognizer?.apply {
-            stopListening()
-            destroy()
-        }
-        speechRecognizer = null
+        // Intent 模式无需手动释放资源
     }
 }
