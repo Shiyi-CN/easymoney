@@ -833,7 +833,7 @@ private fun AddRecordSheet(
                     OutlinedTextField(
                         value = reimbursementTarget,
                         onValueChange = { reimbursementTarget = it },
-                        placeholder = { Text("报销对象，如"XX公司""张三"", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                        placeholder = { Text("报销对象，如「XX公司」「张三」", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         shape = RoundedCornerShape(10.dp),
