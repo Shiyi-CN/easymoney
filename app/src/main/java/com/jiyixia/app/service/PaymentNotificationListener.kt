@@ -33,27 +33,33 @@ class PaymentNotificationListener : NotificationListenerService() {
 
         // 支付关键词 → 分类映射
         private val MERCHANT_RULES = mapOf(
-            "餐饮" to listOf("外卖", "餐厅", "火锅", "奶茶", "咖啡", "快餐", "小吃", "食堂", "美团外卖", "饿了么", "肯德基", "麦当劳", "星巴克", "瑞幸", "美团", "大众点评"),
-            "交通" to listOf("打车", "地铁", "加油", "停车", "公交", "滴滴", "高德", "哈啰", "青桔", "12306", "铁路", "航空", "机票", "火车"),
-            "购物" to listOf("超市", "便利店", "百货", "淘宝", "京东", "拼多多", "全家", "711", "罗森", "抖音", "快手", "唯品会", "闲鱼"),
-            "娱乐" to listOf("电影", "游戏", "KTV", "酒吧", "门票", "景区", "旅游", "酒店"),
-            "居住" to listOf("房租", "水电", "物业", "燃气", "宽带", "话费", "充值"),
-            "医疗" to listOf("医院", "药", "体检", "诊所", "挂号"),
-            "教育" to listOf("课程", "培训", "书", "学费", "考试"),
+            "餐饮" to listOf("外卖", "餐厅", "火锅", "奶茶", "咖啡", "快餐", "小吃", "食堂", "美团外卖", "饿了么", "肯德基", "麦当劳", "星巴克", "瑞幸", "美团", "大众点评", "面包", "蛋糕", "甜品", "烧烤", "串串", "麻辣烫", "盒马", "叮咚"),
+            "交通" to listOf("打车", "地铁", "加油", "停车", "公交", "滴滴", "高德", "哈啰", "青桔", "12306", "铁路", "航空", "机票", "火车", "高速", "过路费", "ETC", "网约车", "顺风车"),
+            "购物" to listOf("超市", "便利店", "百货", "淘宝", "京东", "拼多多", "全家", "711", "罗森", "抖音", "快手", "唯品会", "闲鱼", "天猫", "苏宁", "小米商城", "华为商城", "得物", "转转", "二手"),
+            "娱乐" to listOf("电影", "游戏", "KTV", "酒吧", "门票", "景区", "旅游", "酒店", "剧本杀", "密室", "游乐园", "演唱会", "演出", "B站", "bilibili", "爱奇艺", "腾讯视频", "优酷", "芒果", "会员"),
+            "居住" to listOf("房租", "水电", "物业", "燃气", "宽带", "话费", "充值", "水费", "电费", "煤气", "取暖", "物管", "手机缴费", "固话"),
+            "医疗" to listOf("医院", "药", "体检", "诊所", "挂号", "牙科", "眼科", "门诊", "住院", "医保", "药店"),
+            "教育" to listOf("课程", "培训", "书", "学费", "考试", "教材", "文具", "网课", "得到", "知乎", "知识付费"),
         )
 
         // 多种金额正则，覆盖微信/支付宝/银行各种格式
         private val AMOUNT_PATTERNS = listOf(
-            // "支出/消费/付款/扣款/支付 + 金额元"
-            Regex("""(?:支出|消费|付款|扣款|支付|转账|付款成功|支付成功)[^\d]*([\d,.]+)\s*元"""),
+            // "支出/消费/付款/扣款/支付/还款/缴费 + 金额元"
+            Regex("""(?:支出|消费|付款|扣款|支付|转账|付款成功|支付成功|还款|缴费|退款|汇入|汇出)[^\d]*([\d,.]+)\s*元"""),
             // ¥ 或 ￥ 符号
             Regex("""[¥￥]\s*([\d,.]+)"""),
             // "金额元"（微信转账常见）
             Regex("""([\d,.]+)\s*元"""),
-            // "向xx转账/收xx转账 + 金额"
-            Regex("""(?:向|收).{0,10}转(?:账|款)[^\d]*([\d,.]+)"""),
+            // "向xx转账/收xx转账/转给xx + 金额"
+            Regex("""(?:向|收|转给).{0,15}转(?:账|款)[^\d]*([\d,.]+)"""),
             // "收款到账" 格式
             Regex("""到账[^\d]*([\d,.]+)"""),
+            // "交易金额: 元" / "金额: 元"
+            Regex("""(?:交易)?金额[：:]\s*[¥￥]?\s*([\d,.]+)"""),
+            // "扣款金额" 银行常见
+            Regex("""扣款[^\d]*([\d,.]+)"""),
+            // "入账" 收入
+            Regex("""入账[^\d]*([\d,.]+)"""),
         )
     }
 
@@ -85,8 +91,11 @@ class PaymentNotificationListener : NotificationListenerService() {
 
         Log.d(TAG, "识别到支付: amount=$amount, text=$allText")
 
+        // 判断收支类型
+        val type = if (isIncome(allText)) 1 else 0
+
         // 解析商户 → 分类
-        val (categoryName, confidence) = matchCategory(allText)
+        val (categoryName, confidence) = matchCategory(allText, type)
 
         // 保存到数据库
         val app = applicationContext as JiYiXiaApp
@@ -94,14 +103,16 @@ class PaymentNotificationListener : NotificationListenerService() {
             try {
                 val db = app.database
                 val categories = db.categoryDao().getAll().first()
-                val category = categories.find { it.name == categoryName }
-                    ?: categories.find { it.name == "其他" }
+                val category = categories.find { it.name == categoryName && it.type == type }
+                    ?: categories.find { it.name == categoryName }
+                    ?: categories.find { it.name == "其他" && it.type == type }
+                    ?: categories.firstOrNull()
 
                 if (category != null) {
                     val isPending = confidence < 80
                     db.recordDao().insert(
                         Record(
-                            type = 0, // 支出
+                            type = type,
                             amount = amount,
                             categoryId = category.id,
                             note = allText.take(100),
@@ -111,9 +122,10 @@ class PaymentNotificationListener : NotificationListenerService() {
                         )
                     )
                     // 显示识别通知
-                    showDetectNotification(amount, categoryName, isPending)
+                    val typeLabel = if (type == 1) "收入" else "支出"
+                    showDetectNotification(amount, "$typeLabel·$categoryName", isPending)
                     // 记录调试信息
-                    addDetection("识别: ¥$amount → $categoryName (置信度$confidence%)")
+                    addDetection("识别: $typeLabel ¥$amount → $categoryName (置信度$confidence%)")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "保存记录失败", e)
@@ -124,16 +136,30 @@ class PaymentNotificationListener : NotificationListenerService() {
 
     private fun isPaymentApp(packageName: String): Boolean {
         return packageName in setOf(
+            // 第三方支付
             "com.eg.android.AlipayGphone",      // 支付宝
             "com.tencent.mm",                     // 微信
-            "com.tencent.mobileqq",               // QQ（QQ支付）
+            "com.tencent.mobileqq",               // QQ
+            "com.unionpay",                       // 云闪付
+            "com.tencent.wetype",                 // 微信输入法（可能推送支付提示）
+            // 国有银行
             "com.icbc",                           // 工商银行
-            "com.cmbchina",                       // 招商银行
             "com.chinamworld.mainapp",            // 建设银行
+            "com.android.bankabc",                // 农业银行
+            "com.boc.bocsoft.bocmbp",             // 中国银行
             "com.bankcomm.Bankcomm",              // 交通银行
+            // 股份制银行
+            "com.cmbchina",                       // 招商银行
             "com.spdbccc.app",                    // 浦发银行
             "com.pingan.pab",                     // 平安银行
             "com.cgbchina",                       // 广发银行
+            "com.cmbc.mbank",                     // 民生银行
+            "com.cib.text",                       // 兴业银行
+            "com.cebbank.mobile.cemb",            // 光大银行
+            "com.hxb.mobilebank",                 // 华夏银行
+            // 城商行/农商行
+            "com.bankofbeijing.mobilebanking",    // 北京银行
+            "com.yitong.mbank.psbc",              // 邮储银行
         )
     }
 
@@ -141,12 +167,23 @@ class PaymentNotificationListener : NotificationListenerService() {
     private fun containsPaymentKeyword(text: String): Boolean {
         val keywords = listOf(
             "支付", "付款", "转账", "扣款", "消费", "支出", "收款", "到账",
-            "买单", "结算", "充值", "缴费",
+            "买单", "结算", "充值", "缴费", "还款", "汇款", "入账", "退款",
             "微信支付", "支付宝", "Alipay",
             "信用卡", "借记卡", "银行卡",
-            "订单", "商户", "门店"
+            "订单", "商户", "门店", "交易",
+            "工资", "报销", "提现"
         )
         return keywords.any { text.contains(it) }
+    }
+
+    /** 判断是否为收入（收款/入账/退款/工资等） */
+    private fun isIncome(text: String): Boolean {
+        val incomeKeywords = listOf(
+            "收款", "入账", "到账", "转入", "退款", "返回", "报销",
+            "工资", "奖金", "红包", "退费", "返现", "提现"
+        )
+        return incomeKeywords.any { text.contains(it) } &&
+               !text.contains("付款") && !text.contains("消费") && !text.contains("支出")
     }
 
     /** 全面提取通知文本（兼容微信/支付宝各种格式） */
@@ -190,7 +227,25 @@ class PaymentNotificationListener : NotificationListenerService() {
         return null
     }
 
-    private fun matchCategory(text: String): Pair<String, Int> {
+    private fun matchCategory(text: String, type: Int): Pair<String, Int> {
+        // 收入类别匹配
+        if (type == 1) {
+            val incomeRules = mapOf(
+                "工资" to listOf("工资", "薪水", "薪资", "月薪"),
+                "退款" to listOf("退款", "退费", "退回", "退票"),
+                "红包" to listOf("红包", "奖励金"),
+                "理财" to listOf("理财", "收益", "利息", "基金", "股票"),
+                "兼职" to listOf("兼职", "副业", "稿费", "接单"),
+            )
+            for ((category, keywords) in incomeRules) {
+                for (keyword in keywords) {
+                    if (text.contains(keyword)) return category to 85
+                }
+            }
+            return "其他" to 50
+        }
+
+        // 支出类别匹配
         for ((category, keywords) in MERCHANT_RULES) {
             for (keyword in keywords) {
                 if (text.contains(keyword)) return category to 90

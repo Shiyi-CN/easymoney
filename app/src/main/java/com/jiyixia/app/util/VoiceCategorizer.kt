@@ -316,7 +316,7 @@ object VoiceCategorizer {
             .replace(Regex("""块\s*\d*"""), "")
             .replace(Regex("""[零一二两三四五六七八九十百千万]+"""), "")
             .replace(categoryName, "")
-            .replace("报销", "")     // 报销是标记指令，不是备注内容
+            .replace(Regex("""公司报销|单位报销|部门报销|个人报销|报销"""), "")     // 报销是标记指令，不是备注内容
             .trim()
             .replace(Regex("""\s+"""), " ")
 

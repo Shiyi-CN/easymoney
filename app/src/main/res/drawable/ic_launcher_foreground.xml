@@ -3,9 +3,50 @@
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
-    android:viewportHeight="108"
-    android:tint="#FFFFFF">
+    android:viewportHeight="108">
+
+    <!-- 卡片主体（白色圆角矩形，代表记账本/便签） -->
     <path
-        android:pathData="M54,30L24,60h18v24h24v-24h18z"
-        android:fillColor="@android:color/white"/>
+        android:fillColor="#FFFFFF"
+        android:pathData="M32,20 h44 a8,8 0 0,1 8,8 v60 a8,8 0 0,1 -8,8 h-44 a8,8 0 0,1 -8,-8 v-60 a8,8 0 0,1 8,-8 z" />
+
+    <!-- 折叠角（右下角翘起效果） -->
+    <path
+        android:fillColor="#E8E8E8"
+        android:pathData="M76,80 l8,-8 v8 z" />
+
+    <!-- 顶部彩色条（品牌绿） -->
+    <path
+        android:fillColor="#2D8F68"
+        android:pathData="M32,20 h44 v12 h-44 z" />
+
+    <!-- ¥ 符号（在彩色条中） -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M49,27 L54,31 L59,27 M49,27 L51.5,27 M59,27 L56.5,27 M52,30 L56,30 M49,27 L47.5,30.5 L51.5,27 M59,27 L60.5,30.5 L56.5,27"/>
+
+    <!-- 记录条目线（模拟记账列表） -->
+    <path
+        android:fillColor="#BDBDBD"
+        android:pathData="M40,40 h18 v2.5 h-18 z" />
+    <path
+        android:fillColor="#E0E0E0"
+        android:pathData="M40,46 h24 v2.5 h-24 z" />
+    <path
+        android:fillColor="#EEEEEE"
+        android:pathData="M40,52 h20 v2.5 h-20 z" />
+    <path
+        android:fillColor="#F5F5F5"
+        android:pathData="M40,58 h22 v2.5 h-22 z" />
+
+    <!-- 绿色勾号（右下角，代表记账完成） -->
+    <path
+        android:fillColor="#2D8F68"
+        android:pathData="M62,70 l6,6 l10,-10"
+        android:strokeWidth="3"
+        android:strokeColor="#2D8F68"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent" />
+
 </vector>

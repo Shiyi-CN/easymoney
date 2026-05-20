@@ -109,14 +109,15 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSelectedType(type: Int) { _selectedType.value = type }
 
-    fun addRecord(amount: Double, categoryId: Long, note: String, type: Int, isPendingConfirm: Boolean = false, confidence: Int = 100, isReimbursable: Boolean = false) {
+    fun addRecord(amount: Double, categoryId: Long, note: String, type: Int, isPendingConfirm: Boolean = false, confidence: Int = 100, isReimbursable: Boolean = false, reimbursementTarget: String = "") {
         viewModelScope.launch {
             repo.insertRecord(
                 Record(
                     type = type, amount = amount, categoryId = categoryId,
                     note = note, date = System.currentTimeMillis(),
                     isPendingConfirm = isPendingConfirm, confidence = confidence,
-                    isReimbursable = isReimbursable
+                    isReimbursable = isReimbursable,
+                    reimbursementTarget = reimbursementTarget
                 )
             )
         }

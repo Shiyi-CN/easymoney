@@ -41,5 +41,6 @@ data class Record(
     val isPendingConfirm: Boolean = false,  // 待确认标记
     val confidence: Int = 100,  // 置信度 0-100
     val isReimbursable: Boolean = false,    // 是否可报销（仅支出）
-    val isReimbursed: Boolean = false       // 是否已报销
+    val isReimbursed: Boolean = false,      // 是否已报销
+    val reimbursementTarget: String = ""    // 报销对象（如"XX公司""XX人"）
 )

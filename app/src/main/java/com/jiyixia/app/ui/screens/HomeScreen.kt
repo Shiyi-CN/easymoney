@@ -4,14 +4,17 @@ import android.Manifest
 import android.app.Application
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.ActivityResultLauncher
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -171,17 +174,23 @@ fun HomeScreen(
         }
     }
 
+    // ── 录音权限请求（必须在 HomeScreen 层级，不能在 Sheet 内）──
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* 由 AddRecordSheet 内部处理 */ }
+
     if (showAddSheet) {
         AddRecordSheet(
             categories = expenseCategories,
             allCategories = uiState.categories,
             selectedType = selectedType,
             onTypeChange = { vm.setSelectedType(it) },
-            onConfirm = { amount, categoryId, note, type, isReimbursable ->
-                vm.addRecord(amount, categoryId, note, type, isReimbursable = isReimbursable)
+            onConfirm = { amount, categoryId, note, type, isReimbursable, reimbursementTarget ->
+                vm.addRecord(amount, categoryId, note, type, isReimbursable = isReimbursable, reimbursementTarget = reimbursementTarget)
                 showAddSheet = false
             },
-            onDismiss = { showAddSheet = false }
+            onDismiss = { showAddSheet = false },
+            audioPermissionLauncher = audioPermissionLauncher
         )
     }
 }
@@ -453,6 +462,16 @@ private fun RecordItemCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            // 报销对象显示
+            if (isExpense && record.isReimbursable && record.reimbursementTarget.isNotBlank()) {
+                Text(
+                    "→ ${record.reimbursementTarget}",
+                    fontSize = 11.sp,
+                    color = Color(0xFF1565C0).copy(alpha = 0.7f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
 
         // 金额
@@ -511,8 +530,9 @@ private fun AddRecordSheet(
     allCategories: List<Category>,
     selectedType: Int,
     onTypeChange: (Int) -> Unit,
-    onConfirm: (amount: Double, categoryId: Long, note: String, type: Int, isReimbursable: Boolean) -> Unit,
-    onDismiss: () -> Unit
+    onConfirm: (amount: Double, categoryId: Long, note: String, type: Int, isReimbursable: Boolean, reimbursementTarget: String) -> Unit,
+    onDismiss: () -> Unit,
+    audioPermissionLauncher: ActivityResultLauncher<String>
 ) {
     val context = LocalContext.current
 
@@ -521,22 +541,21 @@ private fun AddRecordSheet(
     var noteText by remember { mutableStateOf("") }
     var currentType by remember { mutableStateOf(selectedType) }
     var isReimbursable by remember { mutableStateOf(false) }
+    var reimbursementTarget by remember { mutableStateOf("") }
 
     // ── 语音识别状态 ──
     val voiceManager = remember { VoiceRecognitionManager(context) }
     var isListening by remember { mutableStateOf(false) }
     var voiceError by remember { mutableStateOf<String?>(null) }
+    var pendingPermissionRequest by remember { mutableStateOf(false) }
 
-    // 录音权限请求
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
+    // 当权限被授予后自动开始监听
+    LaunchedEffect(pendingPermissionRequest) {
+        if (pendingPermissionRequest && voiceManager.hasRecordPermission()) {
+            pendingPermissionRequest = false
             isListening = true
             voiceError = null
             voiceManager.startListening()
-        } else {
-            voiceError = "需要录音权限才能使用语音输入"
         }
     }
 
@@ -585,6 +604,19 @@ private fun AddRecordSheet(
                         // 语音中包含"报销"则自动标记为可报销
                         if (state.text.contains("报销")) {
                             isReimbursable = true
+                            // 提取报销对象：匹配"XX报销""XX公司报销""XX人报销"等
+                            val targetRegex = Regex("""(.{1,8})(?:公司|单位|部门|人)?报销""")
+                            val match = targetRegex.find(state.text)
+                            if (match != null) {
+                                val raw = match.groupValues[1].trim()
+                                // 过滤掉金额/分类等噪音
+                                if (raw.isNotEmpty() && !raw.matches(Regex("""\d+""")) && raw !in setOf("的", "了", "要", "是", "可", "能")) {
+                                    reimbursementTarget = if (match.value.contains("公司")) "$raw 公司"
+                                        else if (match.value.contains("单位")) "$raw 单位"
+                                        else if (match.value.contains("部门")) "$raw 部门"
+                                        else raw
+                                }
+                            }
                         }
                         voiceError = null
                     } else {
@@ -634,6 +666,7 @@ private fun AddRecordSheet(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 32.dp)
+                .verticalScroll(rememberScrollState())
         ) {
             Text(
                 "记一笔",
@@ -717,7 +750,8 @@ private fun AddRecordSheet(
                             voiceError = null
                             voiceManager.startListening()
                         } else {
-                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            pendingPermissionRequest = true
+                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
                     }
                 }
@@ -788,12 +822,26 @@ private fun AddRecordSheet(
             }
             Spacer(Modifier.height(12.dp))
 
-            // ── 报销开关（仅支出时显示）
+            // ── 报销开关 + 报销对象（仅支出时显示）
             if (currentType == 0) {
                 ReimbursableToggle(
                     isReimbursable = isReimbursable,
                     onToggle = { isReimbursable = it }
                 )
+                if (isReimbursable) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = reimbursementTarget,
+                        onValueChange = { reimbursementTarget = it },
+                        placeholder = { Text("报销对象，如"XX公司""张三"", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF1565C0)
+                        )
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
             }
 
@@ -814,7 +862,7 @@ private fun AddRecordSheet(
                     val amount = amountText.toDoubleOrNull() ?: return@Button
                     if (amount > 0) {
                         voiceManager.destroy()
-                        onConfirm(amount, selectedCategoryId, noteText, currentType, isReimbursable)
+                        onConfirm(amount, selectedCategoryId, noteText, currentType, isReimbursable, reimbursementTarget)
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(50.dp),
