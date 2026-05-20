@@ -41,7 +41,6 @@
 
     <!-- 绿色勾号（右下角，代表记账完成） -->
     <path
-        android:fillColor="#2D8F68"
         android:pathData="M62,70 l6,6 l10,-10"
         android:strokeWidth="3"
         android:strokeColor="#2D8F68"
