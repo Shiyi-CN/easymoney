@@ -24,6 +24,9 @@ class RecordRepository(
     fun getExpenseGroupByCategory(start: Long, end: Long): Flow<List<CategorySum>> =
         recordDao.getExpenseGroupByCategory(start, end)
 
+    fun getIncomeGroupByCategory(start: Long, end: Long): Flow<List<CategorySum>> =
+        recordDao.getIncomeGroupByCategory(start, end)
+
     suspend fun insertRecord(record: Record): Long = recordDao.insert(record)
     suspend fun updateRecord(record: Record) = recordDao.update(record)
     suspend fun deleteRecord(record: Record) = recordDao.delete(record)
@@ -34,4 +37,16 @@ class RecordRepository(
     suspend fun insertCategory(category: Category): Long = categoryDao.insert(category)
     suspend fun updateCategory(category: Category) = categoryDao.update(category)
     suspend fun deleteCategory(category: Category) = categoryDao.delete(category)
+
+    // ── 报销 ──
+    fun getReimbursableSumByDateRange(start: Long, end: Long): Flow<Double?> =
+        recordDao.getReimbursableSumByDateRange(start, end)
+    fun getReimbursableSumAll(): Flow<Double?> =
+        recordDao.getReimbursableSumAll()
+    fun getReimbursedSumByDateRange(start: Long, end: Long): Flow<Double?> =
+        recordDao.getReimbursedSumByDateRange(start, end)
+    fun getReimbursableCountByDateRange(start: Long, end: Long): Flow<Int> =
+        recordDao.getReimbursableCountByDateRange(start, end)
+    suspend fun setReimbursed(id: Long, reimbursed: Boolean) =
+        recordDao.setReimbursed(id, reimbursed)
 }

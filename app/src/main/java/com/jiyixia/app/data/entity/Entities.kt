@@ -39,5 +39,7 @@ data class Record(
     val date: Long,             // Unix 时间戳(毫秒)
     val createdAt: Long = System.currentTimeMillis(),
     val isPendingConfirm: Boolean = false,  // 待确认标记
-    val confidence: Int = 100   // 置信度 0-100
+    val confidence: Int = 100,  // 置信度 0-100
+    val isReimbursable: Boolean = false,    // 是否可报销（仅支出）
+    val isReimbursed: Boolean = false       // 是否已报销
 )

@@ -18,8 +18,8 @@ import androidx.navigation.compose.rememberNavController
 import com.jiyixia.app.ui.navigation.Screen
 import com.jiyixia.app.ui.navigation.screens
 import com.jiyixia.app.ui.screens.HomeScreen
-import com.jiyixia.app.ui.screens.StatsScreen
 import com.jiyixia.app.ui.screens.SettingsScreen
+import com.jiyixia.app.ui.screens.StatsScreen
 import com.jiyixia.app.ui.theme.JiYiXiaTheme
 
 class MainActivity : ComponentActivity() {
@@ -43,20 +43,29 @@ fun MainApp() {
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface
+            ) {
                 screens.forEach { screen ->
+                    val selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
                     NavigationBarItem(
                         icon = { Icon(screen.icon, contentDescription = screen.label) },
                         label = { Text(screen.label) },
-                        selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
+                        selected = selected,
                         onClick = {
                             navController.navigate(screen.route) {
                                 popUpTo(Screen.Home.route) { saveState = true }
                                 launchSingleTop = true
                                 restoreState = true
                             }
-                        }
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer
+                        )
                     )
                 }
             }

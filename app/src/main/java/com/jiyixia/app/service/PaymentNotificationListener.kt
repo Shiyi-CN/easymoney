@@ -1,11 +1,19 @@
 package com.jiyixia.app.service
 
 import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Log
+import androidx.core.app.NotificationCompat
 import com.jiyixia.app.JiYiXiaApp
 import com.jiyixia.app.data.entity.Record
+import com.jiyixia.app.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -14,19 +22,39 @@ import kotlinx.coroutines.launch
 class PaymentNotificationListener : NotificationListenerService() {
 
     companion object {
+        private const val TAG = "PaymentListener"
+        private const val CHANNEL_ID = "payment_monitor"
+        private const val FOREGROUND_ID = 1
+        private const val DETECT_ID = 2
+
+        // 最近识别记录（用于调试）
+        private val recentDetections = mutableListOf<String>()
+        val detections: List<String> get() = recentDetections.toList()
+
         // 支付关键词 → 分类映射
         private val MERCHANT_RULES = mapOf(
-            "餐饮" to listOf("外卖", "餐厅", "火锅", "奶茶", "咖啡", "快餐", "小吃", "食堂", "美团外卖", "饿了么", "肯德基", "麦当劳", "星巴克", "瑞幸"),
-            "交通" to listOf("打车", "地铁", "加油", "停车", "公交", "滴滴", "高德", "哈啰", "青桔"),
-            "购物" to listOf("超市", "便利店", "百货", "淘宝", "京东", "拼多多", "全家", "711", "罗森"),
-            "娱乐" to listOf("电影", "游戏", "KTV", "酒吧", "门票"),
-            "居住" to listOf("房租", "水电", "物业", "燃气", "宽带"),
-            "医疗" to listOf("医院", "药", "体检", "诊所"),
-            "教育" to listOf("课程", "培训", "书", "学费"),
+            "餐饮" to listOf("外卖", "餐厅", "火锅", "奶茶", "咖啡", "快餐", "小吃", "食堂", "美团外卖", "饿了么", "肯德基", "麦当劳", "星巴克", "瑞幸", "美团", "大众点评"),
+            "交通" to listOf("打车", "地铁", "加油", "停车", "公交", "滴滴", "高德", "哈啰", "青桔", "12306", "铁路", "航空", "机票", "火车"),
+            "购物" to listOf("超市", "便利店", "百货", "淘宝", "京东", "拼多多", "全家", "711", "罗森", "抖音", "快手", "唯品会", "闲鱼"),
+            "娱乐" to listOf("电影", "游戏", "KTV", "酒吧", "门票", "景区", "旅游", "酒店"),
+            "居住" to listOf("房租", "水电", "物业", "燃气", "宽带", "话费", "充值"),
+            "医疗" to listOf("医院", "药", "体检", "诊所", "挂号"),
+            "教育" to listOf("课程", "培训", "书", "学费", "考试"),
         )
 
-        private val AMOUNT_REGEX = Regex("""(?:支出|消费|付款|扣款|支付)[^\d]*([\d,.]+)元""", RegexOption.IGNORE_CASE)
-        private val AMOUNT_REGEX2 = Regex("""¥([\d,.]+)""")
+        // 多种金额正则，覆盖微信/支付宝/银行各种格式
+        private val AMOUNT_PATTERNS = listOf(
+            // "支出/消费/付款/扣款/支付 + 金额元"
+            Regex("""(?:支出|消费|付款|扣款|支付|转账|付款成功|支付成功)[^\d]*([\d,.]+)\s*元"""),
+            // ¥ 或 ￥ 符号
+            Regex("""[¥￥]\s*([\d,.]+)"""),
+            // "金额元"（微信转账常见）
+            Regex("""([\d,.]+)\s*元"""),
+            // "向xx转账/收xx转账 + 金额"
+            Regex("""(?:向|收).{0,10}转(?:账|款)[^\d]*([\d,.]+)"""),
+            // "收款到账" 格式
+            Regex("""到账[^\d]*([\d,.]+)"""),
+        )
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
@@ -36,63 +64,129 @@ class PaymentNotificationListener : NotificationListenerService() {
         if (!isPaymentApp(packageName)) return
 
         val notification = sbn.notification ?: return
-        val text = extractText(notification) ?: return
+        val allText = extractAllText(notification)
+
+        Log.d(TAG, "收到通知: pkg=$packageName, text=$allText")
+
+        if (allText.isBlank()) return
+
+        // 检查是否包含支付相关关键词（避免误识别普通聊天消息）
+        if (!containsPaymentKeyword(allText)) {
+            Log.d(TAG, "无支付关键词，跳过")
+            return
+        }
 
         // 解析金额
-        val amount = parseAmount(text) ?: return
-        if (amount <= 0) return
+        val amount = parseAmount(allText)
+        if (amount == null || amount <= 0) {
+            Log.d(TAG, "无法解析金额，跳过")
+            return
+        }
+
+        Log.d(TAG, "识别到支付: amount=$amount, text=$allText")
 
         // 解析商户 → 分类
-        val (categoryName, confidence) = matchCategory(text)
+        val (categoryName, confidence) = matchCategory(allText)
 
         // 保存到数据库
         val app = applicationContext as JiYiXiaApp
         CoroutineScope(Dispatchers.IO).launch {
-            val db = app.database
-            val categories = db.categoryDao().getAll().first()
-            val category = categories.find { it.name == categoryName } ?: categories.find { it.name == "其他" }
+            try {
+                val db = app.database
+                val categories = db.categoryDao().getAll().first()
+                val category = categories.find { it.name == categoryName }
+                    ?: categories.find { it.name == "其他" }
 
-            if (category != null) {
-                val isPending = confidence < 80
-                db.recordDao().insert(
-                    Record(
-                        type = 0, // 支出
-                        amount = amount,
-                        categoryId = category.id,
-                        note = text.take(50),
-                        date = System.currentTimeMillis(),
-                        isPendingConfirm = isPending,
-                        confidence = confidence
+                if (category != null) {
+                    val isPending = confidence < 80
+                    db.recordDao().insert(
+                        Record(
+                            type = 0, // 支出
+                            amount = amount,
+                            categoryId = category.id,
+                            note = allText.take(100),
+                            date = System.currentTimeMillis(),
+                            isPendingConfirm = isPending,
+                            confidence = confidence
+                        )
                     )
-                )
+                    // 显示识别通知
+                    showDetectNotification(amount, categoryName, isPending)
+                    // 记录调试信息
+                    addDetection("识别: ¥$amount → $categoryName (置信度$confidence%)")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "保存记录失败", e)
+                addDetection("错误: ${e.message}")
             }
         }
     }
 
     private fun isPaymentApp(packageName: String): Boolean {
         return packageName in setOf(
-            "com.eg.android.AlipayGphone",  // 支付宝
-            "com.tencent.mm",                // 微信
-            "com.icbc",                      // 工商银行
-            "com.cmbchina",                  // 招商银行
-            "com.chinamworld.mainapp",       // 建设银行
-            "com.bankcomm.Bankcomm",         // 交通银行
-            "com.spdbccc.app",               // 浦发银行
+            "com.eg.android.AlipayGphone",      // 支付宝
+            "com.tencent.mm",                     // 微信
+            "com.tencent.mobileqq",               // QQ（QQ支付）
+            "com.icbc",                           // 工商银行
+            "com.cmbchina",                       // 招商银行
+            "com.chinamworld.mainapp",            // 建设银行
+            "com.bankcomm.Bankcomm",              // 交通银行
+            "com.spdbccc.app",                    // 浦发银行
+            "com.pingan.pab",                     // 平安银行
+            "com.cgbchina",                       // 广发银行
         )
     }
 
-    private fun extractText(notification: Notification): String? {
-        val extras = notification.extras ?: return null
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
-        return "$title $text".ifBlank { null }
+    /** 检查是否包含支付关键词，过滤普通聊天消息 */
+    private fun containsPaymentKeyword(text: String): Boolean {
+        val keywords = listOf(
+            "支付", "付款", "转账", "扣款", "消费", "支出", "收款", "到账",
+            "买单", "结算", "充值", "缴费",
+            "微信支付", "支付宝", "Alipay",
+            "信用卡", "借记卡", "银行卡",
+            "订单", "商户", "门店"
+        )
+        return keywords.any { text.contains(it) }
     }
 
+    /** 全面提取通知文本（兼容微信/支付宝各种格式） */
+    private fun extractAllText(notification: Notification): String {
+        val extras = notification.extras ?: return ""
+        val sb = StringBuilder()
+
+        // 标题
+        extras.getCharSequence(Notification.EXTRA_TITLE)?.let { sb.append(it).append(" ") }
+        // 副标题
+        extras.getCharSequence(Notification.EXTRA_TITLE_BIG)?.let { sb.append(it).append(" ") }
+        // 主文本
+        extras.getCharSequence(Notification.EXTRA_TEXT)?.let { sb.append(it).append(" ") }
+        // 大文本（微信支付详情常在这里）
+        extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.let { sb.append(it).append(" ") }
+        // 摘要
+        extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.let { sb.append(it).append(" ") }
+        // 子文本
+        extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.let { sb.append(it).append(" ") }
+        // 文本行（多行通知）
+        @Suppress("DEPRECATION")
+        extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.let { lines ->
+            lines.forEach { sb.append(it).append(" ") }
+        }
+
+        return sb.toString().trim()
+    }
+
+    /** 用多种正则尝试解析金额 */
     private fun parseAmount(text: String): Double? {
-        AMOUNT_REGEX.find(text)?.groupValues?.get(1)?.replace(",", "")?.toDoubleOrNull()
-            ?.let { return it }
-        AMOUNT_REGEX2.find(text)?.groupValues?.get(1)?.replace(",", "")?.toDoubleOrNull()
-            ?.let { return it }
+        for (pattern in AMOUNT_PATTERNS) {
+            val match = pattern.find(text)
+            if (match != null) {
+                val amountStr = match.groupValues[1].replace(",", "").replace(" ", "")
+                val amount = amountStr.toDoubleOrNull()
+                if (amount != null && amount > 0 && amount < 1000000) {
+                    return amount
+                }
+            }
+        }
         return null
     }
 
@@ -102,14 +196,100 @@ class PaymentNotificationListener : NotificationListenerService() {
                 if (text.contains(keyword)) return category to 90
             }
         }
-        return "其他" to 50  // 低置信度，标记为待确认
+        return "其他" to 50
     }
+
+    private fun addDetection(msg: String) {
+        synchronized(recentDetections) {
+            val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                .format(java.util.Date())
+            recentDetections.add(0, "$time $msg")
+            if (recentDetections.size > 20) recentDetections.removeLast()
+        }
+    }
+
+    // ===== 前台服务保活 =====
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        Log.d(TAG, "通知监听服务已连接")
+        startForeground()
+        addDetection("服务已启动")
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        Log.d(TAG, "通知监听服务已断开")
+        addDetection("服务已断开")
+    }
+
+    private fun startForeground() {
+        createChannel()
+
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("记一下 - 监听中")
+            .setContentText("正在监听支付通知")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        try {
+            startForeground(FOREGROUND_ID, notification)
+        } catch (e: Exception) {
+            Log.e(TAG, "启动前台服务失败", e)
+        }
+    }
+
+    /** 显示识别到支付的通知 */
+    private fun showDetectNotification(amount: Double, category: String, isPending: Boolean) {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        createChannel()
+
+        val text = if (isPending) {
+            "识别到 ¥${String.format("%.2f", amount)} → $category（待确认）"
+        } else {
+            "识别到 ¥${String.format("%.2f", amount)} → $category"
+        }
+
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("记一下 - 自动记账")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        // 用时间戳做 ID，避免覆盖
+        nm.notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification)
+    }
+
+    private fun createChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channel = NotificationChannel(
+                CHANNEL_ID, "支付监听",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply { description = "监听支付通知并自动记账" }
+            nm.createNotificationChannel(channel)
+        }
     }
 }

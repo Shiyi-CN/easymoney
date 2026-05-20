@@ -6,6 +6,19 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- 请求忽略电池优化（小米/国产ROM保活） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- 前台服务（保活通知监听） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!-- 语音记账：录音权限（Android 本地语音识别） -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- 语音记账：联网权限（语音识别在无离线包时需要联网） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:name=".JiYiXiaApp"
         android:allowBackup="true"
@@ -30,10 +43,14 @@
         <service
             android:name=".service.PaymentNotificationListener"
             android:exported="false"
+            android:foregroundServiceType="specialUse"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="monitor_payment_notifications" />
         </service>
 
         <!-- 桌面 Widget -->
