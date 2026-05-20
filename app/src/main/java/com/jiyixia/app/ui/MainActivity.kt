@@ -1,5 +1,6 @@
 package com.jiyixia.app.ui
 
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -10,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -21,6 +23,7 @@ import com.jiyixia.app.ui.screens.HomeScreen
 import com.jiyixia.app.ui.screens.SettingsScreen
 import com.jiyixia.app.ui.screens.StatsScreen
 import com.jiyixia.app.ui.theme.JiYiXiaTheme
+import com.jiyixia.app.util.VoicePermissionBridge
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -30,6 +33,19 @@ class MainActivity : ComponentActivity() {
             JiYiXiaTheme {
                 MainApp()
             }
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == VoicePermissionBridge.REQUEST_CODE) {
+            val granted = grantResults.isNotEmpty() &&
+                    grantResults[0] == PackageManager.PERMISSION_GRANTED
+            VoicePermissionBridge.onResult(granted)
         }
     }
 }

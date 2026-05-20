@@ -1,10 +1,11 @@
 package com.jiyixia.app.ui.screens
 
 import android.Manifest
+import android.app.Activity
 import android.app.Application
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.result.ActivityResultLauncher
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -37,6 +38,7 @@ import com.jiyixia.app.data.entity.Category
 import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.ui.theme.*
 import com.jiyixia.app.util.VoiceCategorizer
+import com.jiyixia.app.util.VoicePermissionBridge
 import com.jiyixia.app.util.VoiceRecognitionManager
 import com.jiyixia.app.viewmodel.HomeViewModel
 import java.text.SimpleDateFormat
@@ -45,7 +47,7 @@ import java.util.*
 // ── 分类 Emoji 映射（轻量，不引入图片资源）──────────────────────────────────────
 private val categoryEmojiMap = mapOf(
     "餐饮" to "🍜", "交通" to "🚇", "购物" to "🛒", "娱乐" to "🎮",
-    "居住" to "🏠", "医疗" to "🏥", "教育" to "📚", "其他" to "•••",
+    "居住" to "🏠", "医疗" to "🏥", "教育" to "📚", "其他" to "📋",
     "工资" to "💰", "奖金" to "🏆", "理财" to "📈", "兼职" to "💼",
     "红包" to "🧧"
 )
@@ -174,11 +176,6 @@ fun HomeScreen(
         }
     }
 
-    // ── 录音权限请求（必须在 HomeScreen 层级，不能在 Sheet 内）──
-    val audioPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { /* 由 AddRecordSheet 内部处理 */ }
-
     if (showAddSheet) {
         AddRecordSheet(
             categories = expenseCategories,
@@ -189,8 +186,7 @@ fun HomeScreen(
                 vm.addRecord(amount, categoryId, note, type, isReimbursable = isReimbursable, reimbursementTarget = reimbursementTarget)
                 showAddSheet = false
             },
-            onDismiss = { showAddSheet = false },
-            audioPermissionLauncher = audioPermissionLauncher
+            onDismiss = { showAddSheet = false }
         )
     }
 }
@@ -531,8 +527,7 @@ private fun AddRecordSheet(
     selectedType: Int,
     onTypeChange: (Int) -> Unit,
     onConfirm: (amount: Double, categoryId: Long, note: String, type: Int, isReimbursable: Boolean, reimbursementTarget: String) -> Unit,
-    onDismiss: () -> Unit,
-    audioPermissionLauncher: ActivityResultLauncher<String>
+    onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
 
@@ -547,15 +542,19 @@ private fun AddRecordSheet(
     val voiceManager = remember { VoiceRecognitionManager(context) }
     var isListening by remember { mutableStateOf(false) }
     var voiceError by remember { mutableStateOf<String?>(null) }
-    var pendingPermissionRequest by remember { mutableStateOf(false) }
 
-    // 当权限被授予后自动开始监听
-    LaunchedEffect(pendingPermissionRequest) {
-        if (pendingPermissionRequest && voiceManager.hasRecordPermission()) {
-            pendingPermissionRequest = false
-            isListening = true
-            voiceError = null
-            voiceManager.startListening()
+    // 监听权限授予结果（通过 VoicePermissionBridge）
+    LaunchedEffect(Unit) {
+        VoicePermissionBridge.result.collect { granted ->
+            if (granted == true) {
+                isListening = true
+                voiceError = null
+                voiceManager.startListening()
+                VoicePermissionBridge.reset()
+            } else if (granted == false) {
+                voiceError = "需要录音权限才能使用语音输入"
+                VoicePermissionBridge.reset()
+            }
         }
     }
 
@@ -750,8 +749,17 @@ private fun AddRecordSheet(
                             voiceError = null
                             voiceManager.startListening()
                         } else {
-                            pendingPermissionRequest = true
-                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            // 使用传统 requestPermissions（兼容小米/国产ROM）
+                            val activity = context as? Activity
+                            if (activity != null) {
+                                ActivityCompat.requestPermissions(
+                                    activity,
+                                    arrayOf(Manifest.permission.RECORD_AUDIO),
+                                    VoicePermissionBridge.REQUEST_CODE
+                                )
+                            } else {
+                                voiceError = "无法请求录音权限"
+                            }
                         }
                     }
                 }

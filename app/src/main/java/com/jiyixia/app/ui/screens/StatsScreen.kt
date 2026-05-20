@@ -405,9 +405,9 @@ private fun CategoryTab(
             val pct = if (total > 0) (item.amount / total).toFloat() else 0f
             val emoji = mapOf(
                 "餐饮" to "🍜", "交通" to "🚇", "购物" to "🛒", "娱乐" to "🎮",
-                "居住" to "🏠", "医疗" to "🏥", "教育" to "📚",
+                "居住" to "🏠", "医疗" to "🏥", "教育" to "📚", "其他" to "📋",
                 "工资" to "💰", "奖金" to "🏆", "理财" to "📈", "兼职" to "💼", "红包" to "🧧"
-            )[catName] ?: "•"
+            )[catName] ?: "📋"
 
             Column(
                 modifier = Modifier
