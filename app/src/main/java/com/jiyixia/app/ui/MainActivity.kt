@@ -1,6 +1,5 @@
 package com.jiyixia.app.ui
 
-import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -9,20 +8,26 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.jiyixia.app.data.ThemeMode
+import com.jiyixia.app.data.ThemePreferences
 import com.jiyixia.app.ui.navigation.Screen
 import com.jiyixia.app.ui.navigation.screens
 import com.jiyixia.app.ui.screens.HomeScreen
+import com.jiyixia.app.ui.screens.QuickRecordScreen
+import com.jiyixia.app.ui.screens.ReimbursableRecordsScreen
+import com.jiyixia.app.ui.screens.CategoryManagementScreen
 import com.jiyixia.app.ui.screens.SettingsScreen
 import com.jiyixia.app.ui.screens.StatsScreen
 import com.jiyixia.app.ui.theme.JiYiXiaTheme
-import com.jiyixia.app.util.VoicePermissionBridge
 
 class MainActivity : ComponentActivity() {
 
@@ -30,28 +35,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            JiYiXiaTheme {
+            val context = LocalContext.current
+            val themeMode by ThemePreferences.getThemeMode(context).collectAsState(initial = ThemeMode.FOLLOW_SYSTEM)
+
+            JiYiXiaTheme(themeMode = themeMode) {
                 MainApp()
             }
-        }
-    }
-
-    /**
-     * 权限请求回调 —— 语音权限的唯一回传通道
-     * VoiceRecognitionManager.requestRecordPermission() 使用
-     * ActivityCompat.requestPermissions() 发起请求，结果经此处回传至
-     * VoicePermissionBridge.result Flow，再由 HomeScreen 的 LaunchedEffect 消费。
-     */
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == VoicePermissionBridge.REQUEST_CODE) {
-            val granted = grantResults.isNotEmpty() &&
-                    grantResults[0] == PackageManager.PERMISSION_GRANTED
-            VoicePermissionBridge.onResult(granted)
         }
     }
 }
@@ -98,9 +87,45 @@ fun MainApp() {
             startDestination = Screen.Home.route,
             modifier = Modifier.padding(innerPadding)
         ) {
-            composable(Screen.Home.route) { HomeScreen() }
+            composable(Screen.Home.route) {
+                HomeScreen(
+                    onNavigateToQuickRecord = {
+                        navController.navigate(Screen.QuickRecord.route)
+                    },
+                    onNavigateToReimbursable = {
+                        navController.navigate(Screen.ReimbursableRecords.route)
+                    }
+                )
+            }
             composable(Screen.Stats.route) { StatsScreen() }
-            composable(Screen.Settings.route) { SettingsScreen() }
+            composable(Screen.Settings.route) {
+                SettingsScreen(
+                    onNavigateToCategoryManagement = {
+                        navController.navigate(Screen.CategoryManagement.route)
+                    }
+                )
+            }
+            composable(Screen.QuickRecord.route) {
+                QuickRecordScreen(
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+            composable(Screen.ReimbursableRecords.route) {
+                ReimbursableRecordsScreen(
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+            composable(Screen.CategoryManagement.route) {
+                CategoryManagementScreen(
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
         }
     }
 }

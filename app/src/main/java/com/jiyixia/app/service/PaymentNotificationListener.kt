@@ -31,6 +31,11 @@ class PaymentNotificationListener : NotificationListenerService() {
         private val recentDetections = mutableListOf<String>()
         val detections: List<String> get() = recentDetections.toList()
 
+        // 服务连接状态
+        @Volatile
+        var isServiceConnected = false
+            private set
+
         // 支付关键词 → 分类映射
         private val MERCHANT_RULES = mapOf(
             "餐饮" to listOf("外卖", "餐厅", "火锅", "奶茶", "咖啡", "快餐", "小吃", "食堂", "美团外卖", "饿了么", "肯德基", "麦当劳", "星巴克", "瑞幸", "美团", "大众点评", "面包", "蛋糕", "甜品", "烧烤", "串串", "麻辣烫", "盒马", "叮咚"),
@@ -135,32 +140,36 @@ class PaymentNotificationListener : NotificationListenerService() {
     }
 
     private fun isPaymentApp(packageName: String): Boolean {
-        return packageName in setOf(
-            // 第三方支付
+        // 精确匹配的第三方支付
+        val exactMatch = setOf(
             "com.eg.android.AlipayGphone",      // 支付宝
             "com.tencent.mm",                     // 微信
             "com.tencent.mobileqq",               // QQ
             "com.unionpay",                       // 云闪付
             "com.tencent.wetype",                 // 微信输入法（可能推送支付提示）
-            // 国有银行
+        )
+        if (packageName in exactMatch) return true
+
+        // 前缀匹配的银行 app（包名在不同设备/版本可能有后缀差异）
+        val bankPrefixes = listOf(
             "com.icbc",                           // 工商银行
-            "com.chinamworld.mainapp",            // 建设银行
+            "com.chinamworld",                    // 建设银行
             "com.android.bankabc",                // 农业银行
-            "com.boc.bocsoft.bocmbp",             // 中国银行
-            "com.bankcomm.Bankcomm",              // 交通银行
-            // 股份制银行
+            "com.boc.bocsoft",                    // 中国银行
+            "com.bankcomm",                       // 交通银行
             "com.cmbchina",                       // 招商银行
-            "com.spdbccc.app",                    // 浦发银行
-            "com.pingan.pab",                     // 平安银行
+            "com.spdbccc",                        // 浦发银行
+            "com.pingan",                         // 平安银行
             "com.cgbchina",                       // 广发银行
             "com.cmbc.mbank",                     // 民生银行
-            "com.cib.text",                       // 兴业银行
-            "com.cebbank.mobile.cemb",            // 光大银行
-            "com.hxb.mobilebank",                 // 华夏银行
-            // 城商行/农商行
-            "com.bankofbeijing.mobilebanking",    // 北京银行
+            "com.cib",                            // 兴业银行
+            "com.cebbank",                        // 光大银行
+            "com.hxb",                            // 华夏银行
+            "com.bankofbeijing",                  // 北京银行
             "com.yitong.mbank.psbc",              // 邮储银行
+            "com.psbc",                           // 邮储银行（另一种包名）
         )
+        return bankPrefixes.any { packageName.startsWith(it) }
     }
 
     /** 检查是否包含支付关键词，过滤普通聊天消息 */
@@ -267,6 +276,7 @@ class PaymentNotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        isServiceConnected = true
         Log.d(TAG, "通知监听服务已连接")
         startForeground()
         addDetection("服务已启动")
@@ -274,6 +284,7 @@ class PaymentNotificationListener : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        isServiceConnected = false
         Log.d(TAG, "通知监听服务已断开")
         addDetection("服务已断开")
     }

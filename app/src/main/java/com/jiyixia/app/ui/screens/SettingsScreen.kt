@@ -10,6 +10,8 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
 import com.jiyixia.app.BuildConfig
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -28,8 +30,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jiyixia.app.JiYiXiaApp
+import com.jiyixia.app.data.ThemeMode
+import com.jiyixia.app.data.ThemePreferences
+import com.jiyixia.app.service.BubbleService
 import com.jiyixia.app.service.PaymentNotificationListener
 import com.jiyixia.app.ui.theme.*
+import com.jiyixia.app.util.BackupUtil
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -56,14 +62,28 @@ private fun isXiaomi(): Boolean =
 // ══════════════════════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(
+    onNavigateToCategoryManagement: () -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var exportMsg by remember { mutableStateOf("") }
     var showClearDialog by remember { mutableStateOf(false) }
 
     val listenerEnabled = isNotificationListenerEnabled(context)
+    val serviceConnected = PaymentNotificationListener.isServiceConnected
     val xiaomi = isXiaomi()
+
+    // 主题模式状态
+    val themeMode by ThemePreferences.getThemeMode(context).collectAsState(initial = ThemeMode.FOLLOW_SYSTEM)
+
+    // 通知权限状态（Android 13+）
+    val hasNotificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+    } else {
+        true
+    }
 
     TopAppBar(
         title = { Text("设置", fontWeight = FontWeight.SemiBold, fontSize = 17.sp) },
@@ -84,13 +104,53 @@ fun SettingsScreen() {
             SettingsRow(
                 iconBg = Color(0xFFE8F5E9), icon = "🔔",
                 title = "通知监听",
-                desc = "自动捕获支付宝 / 微信支付通知",
+                desc = when {
+                    !listenerEnabled -> "未开启，请点击右侧开关授权"
+                    !serviceConnected -> "已授权，服务未连接（重启App试试）"
+                    !hasNotificationPermission -> "通知权限未授予，可能收不到推送"
+                    else -> "正在监听支付宝 / 微信支付通知"
+                },
+                titleColor = if (listenerEnabled && serviceConnected && hasNotificationPermission)
+                    MaterialTheme.colorScheme.onSurface else WarningOrange,
                 trailing = {
                     Switch(
-                        checked = listenerEnabled,
+                        checked = listenerEnabled && serviceConnected,
                         onCheckedChange = {
                             val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
                             context.startActivity(intent)
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary)
+                    )
+                }
+            )
+            SettingsDivider()
+
+            // 悬浮气泡 Toggle
+            var bubbleEnabled by remember { mutableStateOf(BubbleService.isRunning) }
+            SettingsRow(
+                iconBg = Color(0xFFE3F2FD), icon = "💬",
+                title = "悬浮气泡",
+                desc = if (bubbleEnabled) "已开启，点击气泡快速记账" else "开启后随时快速记账，无需打开App",
+                trailing = {
+                    Switch(
+                        checked = bubbleEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                // 检查悬浮窗权限
+                                if (Settings.canDrawOverlays(context)) {
+                                    BubbleService.start(context)
+                                    bubbleEnabled = true
+                                } else {
+                                    // 跳转到悬浮窗权限设置
+                                    val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                                        data = Uri.parse("package:${context.packageName}")
+                                    }
+                                    context.startActivity(intent)
+                                }
+                            } else {
+                                BubbleService.stop(context)
+                                bubbleEnabled = false
+                            }
                         },
                         colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary)
                     )
@@ -161,6 +221,39 @@ fun SettingsScreen() {
                 SettingsDivider()
             }
 
+            // Android 13+ 通知权限
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
+                SettingsRow(
+                    iconBg = Color(0xFFFFF3E0), icon = "📢",
+                    title = "通知权限",
+                    desc = "Android 13+ 需要单独授予通知权限",
+                    trailing = {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(ExpenseRed)
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text("需开启", color = Color.White, fontSize = 10.sp)
+                        }
+                    },
+                    onClick = {
+                        try {
+                            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            }
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                            context.startActivity(intent)
+                        }
+                    }
+                )
+                SettingsDivider()
+            }
+
             // 自动确认规则
             SettingsRow(
                 iconBg = Color(0xFFE8F5E9), icon = "🤖",
@@ -179,8 +272,70 @@ fun SettingsScreen() {
                 iconBg = Color(0xFFE3F2FD), icon = "📂",
                 title = "分类管理",
                 desc = "自定义支出与收入分类",
-                trailing = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp) }
+                trailing = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp) },
+                onClick = onNavigateToCategoryManagement
             )
+            SettingsDivider()
+
+            // 备份数据
+            var backupMsg by remember { mutableStateOf("") }
+            SettingsRow(
+                iconBg = Color(0xFFE8F5E9), icon = "💾",
+                title = "备份数据",
+                desc = "备份数据库到本地文件",
+                trailing = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp) },
+                onClick = {
+                    scope.launch {
+                        val result = BackupUtil.backup(context)
+                        backupMsg = result.fold(
+                            onSuccess = { "已备份到 $it" },
+                            onFailure = { "备份失败：${it.message}" }
+                        )
+                    }
+                }
+            )
+            if (backupMsg.isNotEmpty()) {
+                Text(
+                    backupMsg,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                )
+            }
+            SettingsDivider()
+
+            // 恢复数据
+            var restoreMsg by remember { mutableStateOf("") }
+            val restoreLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.GetContent()
+            ) { uri: Uri? ->
+                uri?.let {
+                    scope.launch {
+                        val result = BackupUtil.restore(context, it)
+                        restoreMsg = result.fold(
+                            onSuccess = { "恢复成功，请重启应用" },
+                            onFailure = { "恢复失败：${it.message}" }
+                        )
+                    }
+                }
+            }
+            SettingsRow(
+                iconBg = Color(0xFFFFF3E0), icon = "📥",
+                title = "恢复数据",
+                desc = "从备份文件恢复数据",
+                trailing = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp) },
+                onClick = {
+                    restoreLauncher.launch("*/*")
+                }
+            )
+            if (restoreMsg.isNotEmpty()) {
+                Text(
+                    restoreMsg,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                )
+            }
             SettingsDivider()
 
             SettingsRow(
@@ -220,12 +375,53 @@ fun SettingsScreen() {
         // ═══ 界面 ════════════════════════════════════════════════════════════════
         SectionTitle("界面")
         SettingsCard {
+            // 深色模式选择
             SettingsRow(
                 iconBg = Color(0xFFF1F8E9), icon = "🌙",
                 title = "深色模式",
-                desc = "跟随系统",
+                desc = when (themeMode) {
+                    ThemeMode.FOLLOW_SYSTEM -> "跟随系统"
+                    ThemeMode.LIGHT -> "浅色模式"
+                    ThemeMode.DARK -> "深色模式"
+                },
                 trailing = {
-                    Switch(checked = false, onCheckedChange = {})
+                    // 三选一按钮
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(2.dp)
+                    ) {
+                        listOf(
+                            ThemeMode.FOLLOW_SYSTEM to "系统",
+                            ThemeMode.LIGHT to "浅色",
+                            ThemeMode.DARK to "深色"
+                        ).forEach { (mode, label) ->
+                            val isSelected = themeMode == mode
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        if (isSelected) MaterialTheme.colorScheme.primary
+                                        else Color.Transparent
+                                    )
+                                    .clickable {
+                                        scope.launch {
+                                            ThemePreferences.setThemeMode(context, mode)
+                                        }
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    label,
+                                    fontSize = 11.sp,
+                                    color = if (isSelected) Color.White
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
                 }
             )
             SettingsDivider()
@@ -274,7 +470,13 @@ fun SettingsScreen() {
             title = { Text("清空所有数据？") },
             text = { Text("此操作将永久删除所有记录，无法恢复。", color = MaterialTheme.colorScheme.onSurfaceVariant) },
             confirmButton = {
-                TextButton(onClick = { showClearDialog = false }) {
+                TextButton(onClick = {
+                    val db = (context.applicationContext as JiYiXiaApp).database
+                    scope.launch {
+                        db.recordDao().deleteAll()
+                        showClearDialog = false
+                    }
+                }) {
                     Text("删除", color = ExpenseRed, fontWeight = FontWeight.SemiBold)
                 }
             },

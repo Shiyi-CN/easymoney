@@ -13,11 +13,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
-    <!-- 语音记账：录音权限（Android 本地语音识别） -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-
-    <!-- 语音记账：联网权限（语音识别在无离线包时需要联网） -->
+    <!-- 联网权限（系统语音引擎需要） -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- 通知权限（Android 13+ 需要） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- 悬浮窗权限 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:name=".JiYiXiaApp"
@@ -64,6 +67,24 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/quick_record_widget_info" />
         </receiver>
+
+        <!-- 悬浮气泡服务 -->
+        <service
+            android:name=".service.BubbleService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="floating_bubble_quick_record" />
+        </service>
+
+        <!-- 悬浮气泡快速记账 -->
+        <activity
+            android:name=".ui.BubbleInputActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Transparent"
+            android:taskAffinity=""
+            android:excludeFromRecents="true" />
 
     </application>
 </manifest>

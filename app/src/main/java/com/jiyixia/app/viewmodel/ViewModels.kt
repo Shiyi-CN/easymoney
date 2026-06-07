@@ -125,6 +125,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteRecord(record: Record) { viewModelScope.launch { repo.deleteRecord(record) } }
 
+    fun updateRecord(record: Record) {
+        viewModelScope.launch {
+            repo.updateRecord(record)
+        }
+    }
+
     fun confirmRecord(record: Record) {
         viewModelScope.launch {
             repo.updateRecord(record.copy(isPendingConfirm = false, confidence = 100))
@@ -144,6 +150,26 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val newState = !record.isReimbursed
             repo.setReimbursed(record.id, newState)
+        }
+    }
+
+    // ── 分类管理 ──
+
+    fun addCategory(category: Category) {
+        viewModelScope.launch {
+            repo.insertCategory(category)
+        }
+    }
+
+    fun updateCategory(category: Category) {
+        viewModelScope.launch {
+            repo.updateCategory(category)
+        }
+    }
+
+    fun deleteCategory(category: Category) {
+        viewModelScope.launch {
+            repo.deleteCategory(category)
         }
     }
 }

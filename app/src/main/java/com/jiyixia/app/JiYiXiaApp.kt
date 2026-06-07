@@ -20,8 +20,14 @@ class JiYiXiaApp : Application() {
         CoroutineScope(Dispatchers.IO).launch {
             val dao = database.categoryDao()
             val existing = dao.getAll().first()
-            if (existing.isEmpty()) {
-                PresetCategories.all.forEach { dao.insert(it) }
+
+            // 安全更新：只添加不存在的分类，不删除旧分类
+            val existingNames = existing.map { it.name }.toSet()
+
+            PresetCategories.all.forEach { preset ->
+                if (preset.name !in existingNames) {
+                    dao.insert(preset)
+                }
             }
         }
     }

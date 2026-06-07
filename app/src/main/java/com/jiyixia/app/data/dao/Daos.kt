@@ -69,6 +69,9 @@ interface RecordDao {
     @Query("DELETE FROM records WHERE isPendingConfirm = 1")
     suspend fun deleteAllPending()
 
+    @Query("DELETE FROM records")
+    suspend fun deleteAll()
+
     // ── 报销相关查询 ──
 
     /** 待报销金额（isReimbursable=1 且未报销） */

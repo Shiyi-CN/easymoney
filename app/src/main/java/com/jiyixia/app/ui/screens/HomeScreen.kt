@@ -1,8 +1,6 @@
 package com.jiyixia.app.ui.screens
 
-import android.app.Activity
 import android.app.Application
-import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
@@ -18,6 +16,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,19 +36,22 @@ import com.jiyixia.app.data.entity.Category
 import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.ui.theme.*
 import com.jiyixia.app.util.VoiceCategorizer
-import com.jiyixia.app.util.VoicePermissionBridge
 import com.jiyixia.app.util.VoiceRecognitionManager
 import com.jiyixia.app.viewmodel.HomeViewModel
-import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.*
 
 // ── 分类 Emoji 映射（轻量，不引入图片资源）──────────────────────────────────────
 private val categoryEmojiMap = mapOf(
-    "餐饮" to "🍜", "交通" to "🚇", "购物" to "🛒", "娱乐" to "🎮",
-    "居住" to "🏠", "医疗" to "🏥", "教育" to "📚", "其他" to "📋",
+    // 支出分类
+    "餐饮" to "🍜", "交通" to "🚇", "购物" to "🛒", "居住" to "🏠",
+    "娱乐" to "🎮", "医疗" to "🏥", "教育" to "📚", "通讯" to "📱",
+    "社交" to "🤝", "美容" to "💄", "宠物" to "🐱", "办公" to "💼",
+    "维修" to "🔧", "捐赠" to "❤️", "其他" to "📋",
+    // 收入分类
     "工资" to "💰", "奖金" to "🏆", "理财" to "📈", "兼职" to "💼",
-    "红包" to "🧧"
+    "红包" to "🧧", "报销" to "🧾", "租金" to "🏠", "退款" to "↩️",
+    "中奖" to "🎰"
 )
 private fun categoryEmoji(name: String?) = categoryEmojiMap[name] ?: "💸"
 
@@ -70,26 +73,6 @@ private fun formatDateGroup(dateStr: String): String {
 }
 
 // ── 设备品牌检测（用于语音引擎兼容引导）──────────────────────────────────
-/** 根据设备品牌返回系统语音引擎的麦克风权限开启指引 */
-private fun getVoicePermissionGuide(): String {
-    val m = Build.MANUFACTURER.lowercase()
-    return when {
-        m.contains("xiaomi") || m.contains("redmi") ->
-            "📱 小米设备：设置→应用管理→右上角⋮→显示所有应用→搜「小爱同学」→权限→开启麦克风"
-        m.contains("huawei") || Build.BRAND.lowercase().contains("honor") ->
-            "📱 华为/荣耀：设置→应用→小艺→权限→开启麦克风"
-        m.contains("oppo") || m.contains("realme") ->
-            "📱 OPPO/真我：设置→应用→Breeno（小布助手）→权限→开启麦克风"
-        m.contains("vivo") || m.contains("iqoo") ->
-            "📱 vivo/iQOO：设置→应用与权限→应用管理→右上角⋮→显示系统→搜「Jovi」→权限→开启麦克风"
-        m.contains("samsung") ->
-            "📱 三星：设置→应用程序→搜索「Google」→语音服务→权限→开启麦克风"
-        m.contains("oneplus") ->
-            "📱 一加：设置→应用→语音引擎→权限→开启麦克风"
-        else ->
-            "⚠️ 语音未完成。请确保系统语音助手（长按Home键的那个）已获得麦克风权限"
-    }
-}
 
 private fun formatAmount(amount: Double, type: Int): String {
     val prefix = if (type == 0) "-" else "+"
@@ -107,14 +90,16 @@ private fun daySum(records: List<Record>): String {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
+    onNavigateToQuickRecord: () -> Unit = {},
+    onNavigateToReimbursable: () -> Unit = {},
     vm: HomeViewModel = viewModel(
         factory = HomeViewModelFactory(LocalContext.current.applicationContext as Application)
     )
 ) {
     val uiState by vm.uiState.collectAsState()
-    val selectedType by vm.selectedType.collectAsState()
-    val expenseCategories by vm.expenseCategories.collectAsState()
-    var showAddSheet by remember { mutableStateOf(false) }
+
+    // 编辑记录状态
+    var editingRecord by remember { mutableStateOf<Record?>(null) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -137,7 +122,8 @@ fun HomeScreen(
                         expense = uiState.monthExpense,
                         reimbursable = uiState.monthReimbursable,
                         reimbursed = uiState.monthReimbursed,
-                        reimbursableCount = uiState.reimbursableCount
+                        reimbursableCount = uiState.reimbursableCount,
+                        onReimbursableClick = onNavigateToReimbursable
                     )
                 }
 
@@ -174,7 +160,8 @@ fun HomeScreen(
                                 categories = uiState.categories,
                                 onConfirm = { vm.confirmRecord(record) },
                                 onDelete = { vm.deleteRecord(record) },
-                                onReimbursed = { vm.markReimbursed(record) }
+                                onReimbursed = { vm.markReimbursed(record) },
+                                onEdit = { editingRecord = it }
                             )
                         }
                     }
@@ -182,7 +169,7 @@ fun HomeScreen(
             }
         }
 
-        // ── FAB（圆角矩形）
+        // ── FAB（圆角矩形）- 导航到快速记账界面
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -190,24 +177,23 @@ fun HomeScreen(
                 .size(52.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.primary)
-                .clickable { showAddSheet = true },
+                .clickable { onNavigateToQuickRecord() },
             contentAlignment = Alignment.Center
         ) {
             Icon(Icons.Default.Add, contentDescription = "记一笔", tint = Color.White, modifier = Modifier.size(26.dp))
         }
     }
 
-    if (showAddSheet) {
-        AddRecordSheet(
-            categories = expenseCategories,
-            allCategories = uiState.categories,
-            selectedType = selectedType,
-            onTypeChange = { vm.setSelectedType(it) },
-            onConfirm = { amount, categoryId, note, type, isReimbursable, reimbursementTarget ->
-                vm.addRecord(amount, categoryId, note, type, isReimbursable = isReimbursable, reimbursementTarget = reimbursementTarget)
-                showAddSheet = false
-            },
-            onDismiss = { showAddSheet = false }
+    // 编辑记录对话框
+    editingRecord?.let { record ->
+        EditRecordDialog(
+            record = record,
+            categories = uiState.categories,
+            onDismiss = { editingRecord = null },
+            onSave = { updatedRecord ->
+                vm.updateRecord(updatedRecord)
+                editingRecord = null
+            }
         )
     }
 }
@@ -221,7 +207,8 @@ private fun MonthOverviewCard(
     expense: Double,
     reimbursable: Double = 0.0,
     reimbursed: Double = 0.0,
-    reimbursableCount: Int = 0
+    reimbursableCount: Int = 0,
+    onReimbursableClick: () -> Unit = {}
 ) {
     val balance = income - expense
     val calendar = Calendar.getInstance()
@@ -282,6 +269,7 @@ private fun MonthOverviewCard(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color.White.copy(alpha = 0.12f))
+                        .clickable(onClick = onReimbursableClick)
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Column {
@@ -393,7 +381,8 @@ private fun RecordItemCard(
     categories: List<Category>,
     onConfirm: () -> Unit,
     onDelete: () -> Unit,
-    onReimbursed: () -> Unit = {}
+    onReimbursed: () -> Unit = {},
+    onEdit: (Record) -> Unit = {}
 ) {
     val category = categories.find { it.id == record.categoryId }
     val isPending = record.isPendingConfirm
@@ -517,6 +506,40 @@ private fun RecordItemCard(
                 )
             }
         }
+
+        // 删除按钮（长按显示）
+        Spacer(Modifier.width(4.dp))
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFFFFEBEE))
+                .clickable(onClick = onDelete),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Default.Delete, contentDescription = "删除",
+                tint = Color(0xFFE53935),
+                modifier = Modifier.size(14.dp)
+            )
+        }
+
+        // 编辑按钮
+        Spacer(Modifier.width(4.dp))
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFFE3F2FD))
+                .clickable(onClick = { onEdit(record) }),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Default.Edit, contentDescription = "编辑",
+                tint = Color(0xFF1565C0),
+                modifier = Modifier.size(14.dp)
+            )
+        }
     }
 }
 
@@ -558,39 +581,10 @@ private fun AddRecordSheet(
     var isReimbursable by remember { mutableStateOf(false) }
     var reimbursementTarget by remember { mutableStateOf("") }
 
-    // ── 语音识别状态（Intent 弹窗模式）──
-    val activityContext = LocalContext.current
-    val voiceManager = remember { VoiceRecognitionManager(activityContext) }
+    // ── 语音识别状态（系统 Intent）──
     var voiceError by remember { mutableStateOf<String?>(null) }
-    var showPermissionDeniedDialog by remember { mutableStateOf(false) }
 
-    // Flag：权限刚被授予，需要自动触发语音
-    var pendingVoiceLaunch by remember { mutableStateOf(false) }
-
-    // 监听权限授予结果（通过 VoicePermissionBridge）
-    LaunchedEffect(Unit) {
-        VoicePermissionBridge.result.collect { granted ->
-            if (granted == true) {
-                delay(500)
-                if (voiceManager.hasRecordPermission()) {
-                    voiceError = null
-                    pendingVoiceLaunch = true  // 触发语音启动
-                } else {
-                    voiceError = "麦克风权限未生效，请在系统设置中手动开启"
-                }
-                VoicePermissionBridge.reset()
-            } else if (granted == false) {
-                if (voiceManager.isPermissionPermanentlyDenied()) {
-                    showPermissionDeniedDialog = true
-                } else {
-                    voiceError = "需要麦克风权限才能使用语音输入"
-                }
-                VoicePermissionBridge.reset()
-            }
-        }
-    }
-
-    // 处理语音识别结果的通用方法
+    // 处理语音识别结果
     fun processVoiceText(text: String) {
         val nameToId = allCategories.associate { it.name to it.id }
         val parsed = VoiceCategorizer.parse(
@@ -627,52 +621,27 @@ private fun AddRecordSheet(
         }
     }
 
-    // ── 语音识别结果 Launcher ──
-    val voiceResultLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
+    // 系统语音识别 Launcher
+    val voiceLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val text = voiceManager.parseRecognitionResult(result.data)
-            if (text != null) {
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val text = VoiceRecognitionManager.extractBestText(result.data)
+            if (!text.isNullOrBlank()) {
                 processVoiceText(text)
             } else {
-                voiceError = "未识别到语音内容，请重试"
+                voiceError = "未能识别语音，请重试"
             }
-        } else if (result.resultCode == Activity.RESULT_CANCELED) {
-            // 系统语音引擎报错、权限不足、或用户取消
-            // 按设备品牌给出专属指引（覆盖小米/华为/OPPO/vivo/三星/一加等）
-            voiceError = getVoicePermissionGuide()
         }
     }
 
-    // 触发语音 Intent 的通用方法
-    fun launchVoice() {
-        // 前置检查：语音引擎是否可用
-        if (!voiceManager.isVoiceAvailable()) {
-            voiceError = voiceManager.getUnavailableGuide()
-            return
-        }
-        val activity = voiceManager.findActivity() ?: run {
-            voiceError = "无法启动语音输入"
-            return
-        }
+    // 启动语音识别
+    fun startVoiceRecognition() {
+        voiceError = null
         try {
-            voiceResultLauncher.launch(voiceManager.createRecognitionIntent())
+            voiceLauncher.launch(VoiceRecognitionManager.createRecognizerIntent())
         } catch (e: Exception) {
-            // 捕获 ActivityNotFoundException（无语音引擎）等异常
-            voiceError = if (e is android.content.ActivityNotFoundException) {
-                voiceManager.getUnavailableGuide()
-            } else {
-                "启动语音输入失败：${e.message}"
-            }
-        }
-    }
-
-    // 权限授予后自动触发
-    LaunchedEffect(pendingVoiceLaunch) {
-        if (pendingVoiceLaunch) {
-            pendingVoiceLaunch = false
-            launchVoice()
+            voiceError = "设备不支持语音识别"
         }
     }
 
@@ -692,7 +661,6 @@ private fun AddRecordSheet(
 
     ModalBottomSheet(
         onDismissRequest = {
-            voiceManager.destroy()
             onDismiss()
         },
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
@@ -774,21 +742,7 @@ private fun AddRecordSheet(
             // ── 语音输入入口 ──
             VoiceInputRow(
                 voiceError = voiceError,
-                onClick = {
-                    // 前置检查：引擎是否可用（在权限检查之前）
-                    if (!voiceManager.isVoiceAvailable()) {
-                        voiceError = voiceManager.getUnavailableGuide()
-                        return@VoiceInputRow
-                    }
-                    if (voiceManager.hasRecordPermission()) {
-                        launchVoice()
-                    } else {
-                        val requested = voiceManager.requestRecordPermission()
-                        if (!requested) {
-                            showPermissionDeniedDialog = true
-                        }
-                    }
-                }
+                onClick = { startVoiceRecognition() }
             )
 
             Spacer(Modifier.height(4.dp))
@@ -896,7 +850,6 @@ private fun AddRecordSheet(
                 onClick = {
                     val amount = amountText.toDoubleOrNull() ?: return@Button
                     if (amount > 0) {
-                        voiceManager.destroy()
                         onConfirm(amount, selectedCategoryId, noteText, currentType, isReimbursable, reimbursementTarget)
                     }
                 },
@@ -911,32 +864,10 @@ private fun AddRecordSheet(
             }
         }
     }
-
-    // ── 权限被永久拒绝时的引导对话框 ──
-    if (showPermissionDeniedDialog) {
-        AlertDialog(
-            onDismissRequest = { showPermissionDeniedDialog = false },
-            title = { Text("需要麦克风权限") },
-            text = { Text("语音记账需要麦克风权限才能录音。请前往系统设置 → 权限管理，手动开启「麦克风」权限。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showPermissionDeniedDialog = false
-                    voiceManager.openAppSettings()
-                }) {
-                    Text("去设置")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPermissionDeniedDialog = false }) {
-                    Text("取消")
-                }
-            }
-        )
-    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  语音输入行（Intent 弹窗模式，系统对话框负责 UI）
+//  语音输入行
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun VoiceInputRow(
@@ -945,7 +876,8 @@ private fun VoiceInputRow(
 ) {
     val bgColor = if (voiceError != null) WarningOrangeBg else Surface2
     val iconEmoji = if (voiceError != null) "⚠️" else "🎤"
-    val labelText = voiceError ?: "语音输入（说\"午餐 38\"自动记账）"
+    val titleText = if (voiceError != null) "识别失败" else "语音记账"
+    val labelText = voiceError ?: "说\"午餐 38\"自动记账"
     val labelColor = if (voiceError != null) WarningOrange else MaterialTheme.colorScheme.onSurfaceVariant
 
     Row(
@@ -974,7 +906,7 @@ private fun VoiceInputRow(
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                if (voiceError != null) "识别失败" else "语音记账",
+                titleText,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
                 color = labelColor
@@ -983,7 +915,9 @@ private fun VoiceInputRow(
             Text(
                 labelText,
                 fontSize = 11.sp,
-                color = labelColor.copy(alpha = 0.7f)
+                color = labelColor.copy(alpha = 0.7f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }

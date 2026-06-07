@@ -7,11 +7,18 @@ object PresetCategories {
         Category(name = "餐饮", icon = "Restaurant", type = 0, isPreset = true, sortOrder = 1),
         Category(name = "交通", icon = "DirectionsCar", type = 0, isPreset = true, sortOrder = 2),
         Category(name = "购物", icon = "ShoppingBag", type = 0, isPreset = true, sortOrder = 3),
-        Category(name = "娱乐", icon = "SportsEsports", type = 0, isPreset = true, sortOrder = 4),
-        Category(name = "居住", icon = "Home", type = 0, isPreset = true, sortOrder = 5),
+        Category(name = "居住", icon = "Home", type = 0, isPreset = true, sortOrder = 4),
+        Category(name = "娱乐", icon = "SportsEsports", type = 0, isPreset = true, sortOrder = 5),
         Category(name = "医疗", icon = "LocalHospital", type = 0, isPreset = true, sortOrder = 6),
         Category(name = "教育", icon = "School", type = 0, isPreset = true, sortOrder = 7),
-        Category(name = "其他", icon = "MoreHoriz", type = 0, isPreset = true, sortOrder = 8),
+        Category(name = "通讯", icon = "Phone", type = 0, isPreset = true, sortOrder = 8),
+        Category(name = "社交", icon = "People", type = 0, isPreset = true, sortOrder = 9),
+        Category(name = "美容", icon = "Face", type = 0, isPreset = true, sortOrder = 10),
+        Category(name = "宠物", icon = "Pets", type = 0, isPreset = true, sortOrder = 11),
+        Category(name = "办公", icon = "Work", type = 0, isPreset = true, sortOrder = 12),
+        Category(name = "维修", icon = "Build", type = 0, isPreset = true, sortOrder = 13),
+        Category(name = "捐赠", icon = "Favorite", type = 0, isPreset = true, sortOrder = 14),
+        Category(name = "其他", icon = "MoreHoriz", type = 0, isPreset = true, sortOrder = 15),
     )
 
     val income = listOf(
@@ -20,6 +27,11 @@ object PresetCategories {
         Category(name = "理财", icon = "TrendingUp", type = 1, isPreset = true, sortOrder = 3),
         Category(name = "兼职", icon = "Work", type = 1, isPreset = true, sortOrder = 4),
         Category(name = "红包", icon = "CardGiftcard", type = 1, isPreset = true, sortOrder = 5),
+        Category(name = "报销", icon = "Receipt", type = 1, isPreset = true, sortOrder = 6),
+        Category(name = "租金", icon = "Home", type = 1, isPreset = true, sortOrder = 7),
+        Category(name = "退款", icon = "Undo", type = 1, isPreset = true, sortOrder = 8),
+        Category(name = "中奖", icon = "Star", type = 1, isPreset = true, sortOrder = 9),
+        Category(name = "其他", icon = "MoreHoriz", type = 1, isPreset = true, sortOrder = 10),
     )
 
     val all: List<Category> = expense + income
