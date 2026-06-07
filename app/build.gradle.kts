@@ -20,6 +20,12 @@ android {
         }
     }
 
+    signingConfigs {
+        getByName("debug") {
+            // 使用默认调试密钥，后续可替换为正式密钥
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -28,6 +34,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
