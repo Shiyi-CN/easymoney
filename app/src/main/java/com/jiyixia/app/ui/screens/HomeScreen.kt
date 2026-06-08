@@ -598,23 +598,9 @@ private fun AddRecordSheet(
             if (parsed.note.isNotBlank()) noteText = parsed.note
             if (parsed.isExpense && currentType != 0) { currentType = 0; onTypeChange(0) }
             else if (!parsed.isExpense && currentType != 1) { currentType = 1; onTypeChange(1) }
-            // 报销标记
-            if (text.contains("报销")) {
-                isReimbursable = true
-                val targetRegex = Regex("""(.{1,8})(?:公司|单位|部门|人)?报销""")
-                val match = targetRegex.find(text)
-                if (match != null) {
-                    val raw = match.groupValues[1].trim()
-                    if (raw.isNotEmpty() && !raw.matches(Regex("""\d+""")) && raw !in setOf("的", "了", "要", "是", "可", "能")) {
-                        reimbursementTarget = when {
-                            match.value.contains("公司") -> "$raw 公司"
-                            match.value.contains("单位") -> "$raw 单位"
-                            match.value.contains("部门") -> "$raw 部门"
-                            else -> raw
-                        }
-                    }
-                }
-            }
+            // 报销标记（使用 VoiceCategorizer 的识别结果）
+            isReimbursable = parsed.isReimbursable
+            reimbursementTarget = parsed.reimbursementTarget
             voiceError = null
         } else {
             voiceError = "未能识别金额，请手动输入"
@@ -850,7 +836,9 @@ private fun AddRecordSheet(
                 onClick = {
                     val amount = amountText.toDoubleOrNull() ?: return@Button
                     if (amount > 0) {
-                        onConfirm(amount, selectedCategoryId, noteText, currentType, isReimbursable, reimbursementTarget)
+                        // 清理备注，移除金额、分类、报销等关键词
+                        val cleanedNote = VoiceCategorizer.cleanNote(noteText)
+                        onConfirm(amount, selectedCategoryId, cleanedNote, currentType, isReimbursable, reimbursementTarget)
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(50.dp),

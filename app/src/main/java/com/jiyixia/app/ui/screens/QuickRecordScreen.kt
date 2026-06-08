@@ -27,6 +27,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jiyixia.app.data.entity.Category
 import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.ui.theme.*
+import com.jiyixia.app.util.VoiceCategorizer
 import com.jiyixia.app.viewmodel.HomeViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -114,44 +115,53 @@ fun QuickRecordScreen(
         // 等待一小段时间，确保状态更新
         delay(100)
 
-        // 从输入文本中提取金额
-        val extractedAmount = extractAmount(amountText)
+        if (amountText.isNotBlank()) {
+            // 使用 VoiceCategorizer 统一解析逻辑
+            val nameToId = displayCategories.associate { it.name to it.id }
+            val defaultCategoryId = displayCategories.firstOrNull()?.id ?: 0L
+            val parsed = VoiceCategorizer.parse(
+                text = amountText,
+                categoryNameToId = nameToId,
+                defaultCategoryId = defaultCategoryId
+            )
 
-        if (amountText.isNotBlank() && extractedAmount != null && extractedAmount > 0) {
-            // 启动新的保存任务
-            saveJob = scope.launch {
-                // 延迟500ms后自动保存（给用户修正时间）
-                delay(500)
+            if (parsed != null && parsed.amount > 0) {
+                // 启动新的保存任务
+                saveJob = scope.launch {
+                    // 延迟500ms后自动保存（给用户修正时间）
+                    delay(500)
 
-                // 检查是否还在同一个金额（用户可能已经修改了）
-                val currentExtractedAmount = extractAmount(amountText)
-                val currentExtractedCategory = extractCategory(amountText, displayCategories)
-                val currentIsReimbursable = checkReimbursement(amountText)
-                val currentReimbursementTarget = extractReimbursementTarget(amountText)
+                    // 再次解析，确保用户没有修改
+                    val currentParsed = VoiceCategorizer.parse(
+                        text = amountText,
+                        categoryNameToId = nameToId,
+                        defaultCategoryId = defaultCategoryId
+                    )
 
-                if (amountText.isNotBlank() && currentExtractedAmount != null && currentExtractedAmount > 0) {
-                    isSaving = true
-                    val amount = currentExtractedAmount
-                    val category = currentExtractedCategory ?: displayCategories.find { it.id == selectedCategoryId }
+                    if (currentParsed != null && currentParsed.amount > 0) {
+                        isSaving = true
+                        val category = displayCategories.find { it.id == currentParsed.categoryId }
+                            ?: displayCategories.find { it.id == selectedCategoryId }
 
-                    if (category != null) {
-                        vm.addRecord(
-                            amount = amount,
-                            categoryId = category.id,
-                            note = amountText,  // 保存完整的输入文本作为备注
-                            type = currentType,
-                            isReimbursable = currentIsReimbursable,
-                            reimbursementTarget = currentReimbursementTarget
-                        )
+                        if (category != null) {
+                            vm.addRecord(
+                                amount = currentParsed.amount,
+                                categoryId = category.id,
+                                note = currentParsed.note,  // 使用 VoiceCategorizer 处理后的备注
+                                type = if (currentParsed.isExpense) 0 else 1,
+                                isReimbursable = currentParsed.isReimbursable,
+                                reimbursementTarget = currentParsed.reimbursementTarget
+                            )
 
-                        // 显示成功提示
-                        showSuccess = true
-                        delay(1000) // 显示1秒
+                            // 显示成功提示
+                            showSuccess = true
+                            delay(1000) // 显示1秒
 
-                        // 返回上一页
-                        onNavigateBack()
+                            // 返回上一页
+                            onNavigateBack()
+                        }
+                        isSaving = false
                     }
-                    isSaving = false
                 }
             }
         }

@@ -21,7 +21,9 @@ object VoiceCategorizer {
         val categoryId: Long,         // 分类 ID（需调用方根据名称映射）
         val note: String,             // 提取的备注
         val isExpense: Boolean,       // 是否为支出
-        val confidence: Int           // 置信度 0-100
+        val confidence: Int,          // 置信度 0-100
+        val isReimbursable: Boolean = false,      // 是否可报销
+        val reimbursementTarget: String = ""      // 报销对象
     )
 
     // ═══════════════════════════════════════════════════════════
@@ -33,48 +35,87 @@ object VoiceCategorizer {
         "餐饮" to listOf(
             "午餐", "午饭", "晚餐", "晚饭", "早餐", "早饭", "吃饭", "外卖",
             "餐厅", "饭店", "食堂", "火锅", "奶茶", "咖啡", "饮品", "饮料",
-            "水果", "零食", "小吃", "夜宵", "烧烤", "串串", "面", "粉", "米线",
+            "水果", "零食", "小吃", "夜宵", "宵夜", "烧烤", "串串", "面", "粉", "米线",
             "星巴克", "麦当劳", "肯德基", "瑞幸", "蜜雪", "喜茶", "奈雪",
-            "美团外卖", "饿了么", "盒马", "叮咚", "买菜",
+            "美团外卖", "饿了么", "盒马", "叮咚", "买菜", "海底捞", "必胜客",
+            "肯德基", "KFC", "麦当劳", "M记", "便利店", "全家", "711", "罗森",
             // 通用食物词
-            "吃", "喝", "饭", "菜", "酒", "茶", "奶", "水", "汤", "粥"
+            "吃", "喝", "饭", "菜", "酒", "茶", "奶", "水", "汤", "粥",
+            "蛋糕", "甜品", "冰淇淋", "巧克力", "饼干", "薯片"
         ),
         "交通" to listOf(
             "打车", "地铁", "公交", "加油", "停车", "滴滴", "出租车",
             "高铁", "火车", "机票", "飞机", "骑行", "共享单车", "哈啰",
             "摩拜", "青桔", "顺风车", "网约车", "高速", "过路费",
-            "车", "出行", "导航"
+            "车", "出行", "导航", "充电", "洗车", "保养", "车险",
+            "代驾", "租车", "油费", "充电桩", "ETC"
         ),
         "购物" to listOf(
-            "超市", "便利店", "百货", "商场", "淘宝", "京东", "拼多多",
+            "超市", "百货", "商场", "淘宝", "京东", "拼多多",
             "买", "衣服", "鞋子", "裤子", "日用品", "化妆品", "护肤品",
             "电器", "手机", "电脑", "数码", "快递", "物流", "配送",
-            "购物", "下单", "订单", "购", "件"
+            "购物", "下单", "订单", "购", "件", "618", "双11", "双十一",
+            "天猫", "苏宁", "唯品会", "抖音商城", "小红书"
+        ),
+        "居住" to listOf(
+            "房租", "水电", "物业", "网费", "话费", "租金", "房贷",
+            "维修", "装修", "水费", "电费", "燃气", "煤气", "煤气费",
+            "宽带", "手机费", "物管", "取暖", "物业费", "暖气费",
+            "家具", "家电", "保洁", "家政"
         ),
         "娱乐" to listOf(
             "电影", "游戏", "KTV", "唱歌", "旅游", "景点", "门票",
             "网吧", "网咖", "露营", "演唱会", "演出", "剧本杀",
             "密室", "游乐园", "迪士尼", "音乐", "视频", "会员",
-            "玩", "乐", "唱", "看"
-        ),
-        "居住" to listOf(
-            "房租", "水电", "物业", "网费", "话费", "租金", "房贷",
-            "维修", "装修", "水费", "电费", "燃气", "煤气", "煤气费",
-            "宽带", "手机费", "物管", "取暖", "物业费"
+            "玩", "乐", "唱", "看", "爱奇艺", "腾讯视频", "优酷",
+            "B站", "网飞", "Netflix", "Spotify", "Apple Music",
+            "Steam", "PS5", "Switch", "Xbox"
         ),
         "医疗" to listOf(
             "医院", "药店", "挂号", "药", "看病", "门诊", "体检",
             "诊所", "牙科", "眼科", "住院", "检查", "手术",
-            "生病", "感冒", "发烧", "咳嗽"
+            "生病", "感冒", "发烧", "咳嗽", "医保", "保健品",
+            "维生素", "钙片", "口罩", "消毒液"
         ),
         "教育" to listOf(
             "书", "课程", "培训", "考试", "学费", "资料", "文具",
             "补习", "学习", "教材", "图书", "报名", "考证",
-            "学", "教", "读"
+            "学", "教", "读", "考研", "雅思", "托福", "PMP",
+            "网课", "知乎", "得到", "极客时间"
+        ),
+        "通讯" to listOf(
+            "话费", "流量", "套餐", "宽带", "充值", "移动", "联通", "电信",
+            "手机费", "电话费", "流量包", "会员"
+        ),
+        "社交" to listOf(
+            "份子钱", "随份子", "红包", "请客", "聚餐", "送礼", "礼物",
+            "生日", "婚礼", "满月", "乔迁", "丧事", "人情",
+            "社交", "应酬", "招待"
+        ),
+        "美容" to listOf(
+            "理发", "美发", "染发", "烫发", "美甲", "美容", "护肤",
+            "化妆品", "口红", "面膜", "洗面奶", "防晒", "香水",
+            "SPA", "按摩", "美体", "减肥"
+        ),
+        "宠物" to listOf(
+            "猫粮", "狗粮", "宠物", "猫", "狗", "宠物医院", "疫苗",
+            "驱虫", "绝育", "宠物店", "猫砂", "宠物玩具", "鱼缸",
+            "鸟笼", "仓鼠", "兔子"
+        ),
+        "办公" to listOf(
+            "办公", "打印", "复印", "文具", "笔记本", "笔", "纸",
+            "办公用品", "快递费", "差旅", "出差"
+        ),
+        "维修" to listOf(
+            "维修", "修理", "修手机", "修电脑", "换屏", "换电池",
+            "修车", "保养", "维修费"
+        ),
+        "捐赠" to listOf(
+            "捐款", "捐赠", "慈善", "公益", "爱心", "众筹", "水滴筹"
         ),
         "其他" to listOf(
-            "转账", "充值", "还款", "还款", "借款", "借钱", "随份子",
-            "捐款", "罚款", "手续费"
+            "转账", "充值", "还款", "借款", "借钱", "罚款", "手续费",
+            "其他", "杂项", " miscellaneous"
         )
     )
 
@@ -83,11 +124,15 @@ object VoiceCategorizer {
     // ═══════════════════════════════════════════════════════════
 
     private val incomeCategories = mapOf(
-        "工资" to listOf("工资", "薪水", "发工资", "基本工资", "到手"),
-        "奖金" to listOf("奖金", "年终奖", "项目奖", "绩效", "奖励"),
-        "理财" to listOf("理财", "利息", "基金", "股票", "收益", "存款", "余额宝"),
-        "兼职" to listOf("兼职", "副业", "外快", "稿费", "接单"),
-        "红包" to listOf("红包", "收红包", "零花钱", "压岁钱", "份子钱")
+        "工资" to listOf("工资", "薪水", "发工资", "基本工资", "到手", "月薪", "底薪", "月入"),
+        "奖金" to listOf("奖金", "年终奖", "项目奖", "绩效", "奖励", "提成", "分红", "季度奖"),
+        "理财" to listOf("理财", "利息", "基金", "股票", "收益", "存款", "余额宝", "理财通", "股息", "分红"),
+        "兼职" to listOf("兼职", "副业", "外快", "稿费", "接单", "私活", "外包", "咨询费"),
+        "红包" to listOf("红包", "收红包", "零花钱", "压岁钱", "份子钱", "转账"),
+        "报销" to listOf("报销", "报销款", "报销到账", "差旅报销", "费用报销"),
+        "租金" to listOf("租金", "房租", "收租", "租客", "房租收入"),
+        "退款" to listOf("退款", "退货", "退款到账", "退钱", "返现"),
+        "中奖" to listOf("中奖", "彩票", "抽奖", "奖品", "奖金")
     )
 
     // ═══════════════════════════════════════════════════════════
@@ -113,10 +158,18 @@ object VoiceCategorizer {
         // 1. 提取金额
         val amountResult = extractAmount(cleaned) ?: return null
 
-        // 2. 先判断是否为收入
+        // 2. 检测支出分类
+        val expenseCategory = findCategory(cleaned, expenseCategories)
+
+        // 3. 检测收入分类
         val incomeCategory = findCategory(cleaned, incomeCategories)
-        if (incomeCategory != null) {
-            // 收入类的金额描述
+
+        // 4. 判断是否包含"报销"关键词
+        val hasReimbursementKeyword = listOf("报销", "可报销", "能报销", "要报销").any { cleaned.contains(it) }
+
+        // 5. 收入分类优先（如"报销到账"、"工资"等）
+        //    收入分类不标记为可报销
+        if (incomeCategory != null && expenseCategory == null) {
             val note = buildNote(cleaned, incomeCategory)
             return ParsedResult(
                 amount = amountResult.value,
@@ -125,12 +178,30 @@ object VoiceCategorizer {
                 categoryId = categoryNameToId[incomeCategory] ?: defaultCategoryId,
                 note = note,
                 isExpense = false,
-                confidence = 85
+                confidence = 85,
+                isReimbursable = false, // 收入不标记为可报销
+                reimbursementTarget = ""
             )
         }
 
-        // 3. 按支出分类匹配
-        val expenseCategory = findCategory(cleaned, expenseCategories)
+        // 6. 支出分类 + 报销关键词 = 支出+可报销
+        if (expenseCategory != null && hasReimbursementKeyword) {
+            val reimbursementResult = detectReimbursement(cleaned)
+            val note = buildNote(cleaned, expenseCategory)
+            return ParsedResult(
+                amount = amountResult.value,
+                amountText = amountResult.text,
+                categoryName = expenseCategory,
+                categoryId = categoryNameToId[expenseCategory] ?: defaultCategoryId,
+                note = note,
+                isExpense = true,
+                confidence = 85,
+                isReimbursable = true,
+                reimbursementTarget = reimbursementResult.second
+            )
+        }
+
+        // 7. 纯支出（没有报销关键词）
         if (expenseCategory != null) {
             val note = buildNote(cleaned, expenseCategory)
             return ParsedResult(
@@ -140,11 +211,13 @@ object VoiceCategorizer {
                 categoryId = categoryNameToId[expenseCategory] ?: defaultCategoryId,
                 note = note,
                 isExpense = true,
-                confidence = 80
+                confidence = 80,
+                isReimbursable = false,
+                reimbursementTarget = ""
             )
         }
 
-        // 4. 只识别到金额，分到"其他"
+        // 8. 只识别到金额，分到"其他"
         return ParsedResult(
             amount = amountResult.value,
             amountText = amountResult.text,
@@ -152,8 +225,51 @@ object VoiceCategorizer {
             categoryId = categoryNameToId["其他"] ?: defaultCategoryId,
             note = cleaned,
             isExpense = true,
-            confidence = 50
+            confidence = 50,
+            isReimbursable = false,
+            reimbursementTarget = ""
         )
+    }
+
+    /**
+     * 检测报销相关关键词
+     * @return Pair<是否可报销, 报销对象>
+     */
+    private fun detectReimbursement(text: String): Pair<Boolean, String> {
+        // 报销关键词
+        val reimbursementKeywords = listOf("报销", "可报销", "能报销", "要报销", "需报销")
+        val isReimbursable = reimbursementKeywords.any { text.contains(it) }
+
+        if (!isReimbursable) return Pair(false, "")
+
+        // 提取报销对象
+        // 模式1: "XX分公司" / "XX公司" / "XX单位" / "XX部门" + 任意字符 + "报销"
+        val targetRegex1 = Regex("""([一-龥A-Za-z]{1,10})(分公司|公司|单位|部门|人).*?报销""")
+        val match1 = targetRegex1.find(text)
+        if (match1 != null) {
+            val raw = match1.groupValues[1].trim()
+            val suffix = match1.groupValues[2]
+            // 过滤掉分类关键词和无意义的词
+            val filterWords = setOf("打车", "吃饭", "坐车", "的", "了", "要", "是", "可", "能", "交通", "餐饮")
+            if (raw !in filterWords) {
+                return Pair(true, "$raw$suffix")
+            }
+        }
+
+        // 模式2: 没有后缀，直接在"报销"前面找2-8个中文字符
+        val targetRegex2 = Regex("""([一-龥]{2,8})报销""")
+        val match2 = targetRegex2.find(text)
+        if (match2 != null) {
+            val raw = match2.groupValues[1].trim()
+            // 过滤掉分类关键词和无意义的词
+            val filterWords = setOf("打车", "吃饭", "坐车", "的", "了", "要", "是", "可", "能", "交通", "餐饮", "差旅", "费用", "出差")
+            if (raw !in filterWords) {
+                return Pair(true, raw)
+            }
+        }
+
+        // 模式3: 没有明确对象，返回空
+        return Pair(true, "")
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -310,21 +426,69 @@ object VoiceCategorizer {
     // ═══════════════════════════════════════════════════════════
 
     private fun buildNote(text: String, categoryName: String): String {
-        // 去掉金额相关部分和分类关键词，剩下的作为备注
         var note = text
-            .replace(Regex("""\d+\.?\d*\s*[元块钱￥¥]?"""), "")
-            .replace(Regex("""块\s*\d*"""), "")
-            .replace(Regex("""[零一二两三四五六七八九十百千万]+"""), "")
-            .replace(categoryName, "")
-            .replace(Regex("""公司报销|单位报销|部门报销|个人报销|报销"""), "")     // 报销是标记指令，不是备注内容
-            .trim()
+
+        // 1. 移除金额（数字 + 可选的单位）
+        note = note.replace(Regex("""\d+\.?\d*\s*[元块钱￥¥]?"""), "")
+
+        // 2. 移除中文数字
+        note = note.replace(Regex("""[零一二两三四五六七八九十百千万]+"""), "")
+
+        // 3. 移除报销相关关键词（包括对象）
+        note = note.replace(Regex("""[一-龥A-Za-z]{1,10}?(分公司|公司|单位|部门|人)?报销"""), "")
+        note = note.replace(Regex("""报销"""), "")
+
+        // 4. 移除分类关键词
+        val allCategoryKeywords = expenseCategories.values.flatten() + incomeCategories.values.flatten()
+        for (keyword in allCategoryKeywords.sortedByDescending { it.length }) {
+            note = note.replace(keyword, "")
+        }
+
+        // 5. 清理
+        note = note
+            .replace(Regex("""[元块￥¥角毛分]"""), "")
             .replace(Regex("""\s+"""), " ")
+            .trim()
 
-        // 移除金额单位残留
-        note = note.replace(Regex("""[元块￥¥角毛分]"""), "").trim()
+        // 6. 如果备注太短或无意义，返回空
+        if (note.length <= 1 || note.matches(Regex("""^[的了吧吗呢啊哦嗯\s]+$"""))) {
+            return ""
+        }
 
-        // 如果备注太短或就是一些无意义字符，返回空
-        if (note.length <= 1 || note.matches(Regex("""^[的了吧吗呢啊哦嗯]+$"""))) {
+        return note
+    }
+
+    /**
+     * 清理备注文本（公共方法）
+     * 移除金额、分类关键词、报销关键词等
+     */
+    fun cleanNote(text: String): String {
+        var note = text
+
+        // 1. 移除金额（数字 + 可选的单位）
+        note = note.replace(Regex("""\d+\.?\d*\s*[元块钱￥¥]?"""), "")
+
+        // 2. 移除中文数字
+        note = note.replace(Regex("""[零一二两三四五六七八九十百千万]+"""), "")
+
+        // 3. 移除报销相关关键词（包括对象）
+        note = note.replace(Regex("""[一-龥A-Za-z]{1,10}?(分公司|公司|单位|部门|人)?报销"""), "")
+        note = note.replace(Regex("""报销"""), "")
+
+        // 4. 移除分类关键词
+        val allCategoryKeywords = expenseCategories.values.flatten() + incomeCategories.values.flatten()
+        for (keyword in allCategoryKeywords.sortedByDescending { it.length }) {
+            note = note.replace(keyword, "")
+        }
+
+        // 5. 清理
+        note = note
+            .replace(Regex("""[元块￥¥角毛分]"""), "")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+
+        // 6. 如果备注太短或无意义，返回空
+        if (note.length <= 1 || note.matches(Regex("""^[的了吧吗呢啊哦嗯\s]+$"""))) {
             return ""
         }
 

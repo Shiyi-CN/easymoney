@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import com.jiyixia.app.JiYiXiaApp
 import com.jiyixia.app.data.entity.Category
 import com.jiyixia.app.data.entity.Record
+import com.jiyixia.app.service.BubbleService
 import com.jiyixia.app.ui.theme.ExpenseRed
 import com.jiyixia.app.ui.theme.IncomeGreen
 import com.jiyixia.app.ui.theme.JiYiXiaTheme
@@ -44,7 +45,13 @@ class BubbleInputActivity : ComponentActivity() {
         setContent {
             JiYiXiaTheme {
                 BubbleInputScreen(
-                    onDismiss = { finish() }
+                    onDismiss = {
+                        // 确保 BubbleService 恢复显示
+                        if (!BubbleService.isRunning) {
+                            BubbleService.start(this)
+                        }
+                        finish()
+                    }
                 )
             }
         }
@@ -102,28 +109,9 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
             parsedCategory = allCategories.find { it.id == parsed.categoryId }
             parsedIsExpense = parsed.isExpense
             parsedNote = parsed.note
+            parsedIsReimbursable = parsed.isReimbursable
+            parsedReimbursementTarget = parsed.reimbursementTarget
             isParsed = true
-
-            // 检查报销
-            if (inputText.contains("报销")) {
-                parsedIsReimbursable = true
-                val targetRegex = Regex("""(.{1,8})(?:公司|单位|部门|人)?报销""")
-                val match = targetRegex.find(inputText)
-                if (match != null) {
-                    val raw = match.groupValues[1].trim()
-                    if (raw.isNotEmpty() && !raw.matches(Regex("""\d+""")) && raw !in setOf("的", "了", "要", "是", "可", "能")) {
-                        parsedReimbursementTarget = when {
-                            match.value.contains("公司") -> "$raw 公司"
-                            match.value.contains("单位") -> "$raw 单位"
-                            match.value.contains("部门") -> "$raw 部门"
-                            else -> raw
-                        }
-                    }
-                }
-            } else {
-                parsedIsReimbursable = false
-                parsedReimbursementTarget = ""
-            }
         } else {
             isParsed = false
         }
@@ -154,7 +142,6 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.5f))
             .clickable { onDismiss() },
         contentAlignment = Alignment.Center
     ) {
