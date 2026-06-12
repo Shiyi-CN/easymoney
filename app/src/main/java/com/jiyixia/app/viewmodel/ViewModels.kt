@@ -17,27 +17,57 @@ data class HomeUiState(
     val records: List<Record> = emptyList(),
     val categories: List<Category> = emptyList(),
     val pendingCount: Int = 0,
-    val monthExpense: Double = 0.0,
-    val monthIncome: Double = 0.0,
-    val monthReimbursable: Double = 0.0,    // 本月待报销金额
-    val totalReimbursable: Double = 0.0,    // 全部待报销金额
-    val monthReimbursed: Double = 0.0,      // 本月已报销金额
-    val reimbursableCount: Int = 0          // 本月待报销笔数
+    val monthExpense: Long = 0L,
+    val monthIncome: Long = 0L,
+    val monthReimbursable: Long = 0L,    // 本月待报销金额
+    val totalReimbursable: Long = 0L,    // 全部待报销金额
+    val monthReimbursed: Long = 0L,      // 本月已报销金额
+    val reimbursableCount: Int = 0       // 本月待报销笔数
 )
 
 // ── StatsUiState ───────────────────────────────────────────────────────────────
 data class StatsUiState(
-    val totalExpense: Double = 0.0,
-    val totalIncome: Double = 0.0,
+    val totalExpense: Long = 0L,
+    val totalIncome: Long = 0L,
     val expenseByCategory: List<CategorySum> = emptyList(),
     val incomeByCategory: List<CategorySum> = emptyList(),
     val categories: List<Category> = emptyList(),
     /** 当前月份偏移（0 = 本月，-1 = 上月，…） */
     val monthOffset: Int = 0,
     // 报销统计
-    val pendingReimbursable: Double = 0.0,   // 待报销
-    val reimbursed: Double = 0.0,            // 已报销
-    val reimbursableCount: Int = 0           // 待报销笔数
+    val pendingReimbursable: Long = 0L,   // 待报销
+    val reimbursed: Long = 0L,            // 已报销
+    val reimbursableCount: Int = 0        // 待报销笔数
+)
+
+// ── 内部数据类，用于combine类型安全 ──────────────────────────────────────────────
+private data class HomeFlows(
+    val records: List<Record>,
+    val categories: List<Category>,
+    val pendingCount: Int,
+    val monthExpense: Long?,
+    val monthIncome: Long?
+)
+
+private data class HomeReimbursementFlows(
+    val monthReimbursable: Long?,
+    val totalReimbursable: Long?,
+    val monthReimbursed: Long?,
+    val reimbursableCount: Int
+)
+
+private data class StatsFlows(
+    val totalExpense: Long?,
+    val totalIncome: Long?,
+    val expenseByCategory: List<CategorySum>,
+    val incomeByCategory: List<CategorySum>,
+    val categories: List<Category>
+)
+
+private data class StatsReimbursementFlows(
+    val pendingReimbursable: Long?,
+    val reimbursed: Long?,
+    val reimbursableCount: Int
 )
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -77,7 +107,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             repo.getSumByType(0, monthBounds().first, monthBounds().second),
             repo.getSumByType(1, monthBounds().first, monthBounds().second)
         ) { records, categories, pendingCount, expense, income ->
-            arrayOf<Any?>(records, categories, pendingCount, expense, income)
+            HomeFlows(records, categories, pendingCount, expense, income)
         },
         // 报销 4 个 Flow 合并
         combine(
@@ -86,20 +116,19 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             repo.getReimbursedSumByDateRange(monthBounds().first, monthBounds().second),
             repo.getReimbursableCountByDateRange(monthBounds().first, monthBounds().second)
         ) { monthReim, totalReim, monthReimbursed, reimCount ->
-            arrayOf(monthReim, totalReim, monthReimbursed, reimCount)
+            HomeReimbursementFlows(monthReim, totalReim, monthReimbursed, reimCount)
         }
-    ) { arr, reimArr ->
-        @Suppress("UNCHECKED_CAST")
+    ) { flows, reimFlows ->
         HomeUiState(
-            records = arr[0] as List<Record>,
-            categories = arr[1] as List<Category>,
-            pendingCount = arr[2] as Int,
-            monthExpense = (arr[3] as Double?) ?: 0.0,
-            monthIncome = (arr[4] as Double?) ?: 0.0,
-            monthReimbursable = (reimArr[0] as Double?) ?: 0.0,
-            totalReimbursable = (reimArr[1] as Double?) ?: 0.0,
-            monthReimbursed = (reimArr[2] as Double?) ?: 0.0,
-            reimbursableCount = reimArr[3] as Int
+            records = flows.records,
+            categories = flows.categories,
+            pendingCount = flows.pendingCount,
+            monthExpense = flows.monthExpense ?: 0L,
+            monthIncome = flows.monthIncome ?: 0L,
+            monthReimbursable = reimFlows.monthReimbursable ?: 0L,
+            totalReimbursable = reimFlows.totalReimbursable ?: 0L,
+            monthReimbursed = reimFlows.monthReimbursed ?: 0L,
+            reimbursableCount = reimFlows.reimbursableCount
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 
@@ -109,7 +138,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSelectedType(type: Int) { _selectedType.value = type }
 
-    fun addRecord(amount: Double, categoryId: Long, note: String, type: Int, isPendingConfirm: Boolean = false, confidence: Int = 100, isReimbursable: Boolean = false, reimbursementTarget: String = "") {
+    fun addRecord(amount: Long, categoryId: Long, note: String, type: Int, isPendingConfirm: Boolean = false, confidence: Int = 100, isReimbursable: Boolean = false, reimbursementTarget: String = "") {
         viewModelScope.launch {
             repo.insertRecord(
                 Record(
@@ -213,7 +242,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 repo.getIncomeGroupByCategory(start, end),
                 repo.getAllCategories()
             ) { expense, income, byExpCat, byIncCat, categories ->
-                arrayOf<Any?>(expense, income, byExpCat, byIncCat, categories)
+                StatsFlows(expense, income, byExpCat, byIncCat, categories)
             },
             // 报销 3 个 Flow
             combine(
@@ -221,20 +250,19 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 repo.getReimbursedSumByDateRange(start, end),
                 repo.getReimbursableCountByDateRange(start, end)
             ) { pendingReim, reimbursed, count ->
-                arrayOf(pendingReim, reimbursed, count)
+                StatsReimbursementFlows(pendingReim, reimbursed, count)
             }
-        ) { arr, reimArr ->
-            @Suppress("UNCHECKED_CAST")
+        ) { flows, reimFlows ->
             StatsUiState(
-                totalExpense = (arr[0] as Double?) ?: 0.0,
-                totalIncome = (arr[1] as Double?) ?: 0.0,
-                expenseByCategory = arr[2] as List<CategorySum>,
-                incomeByCategory = arr[3] as List<CategorySum>,
-                categories = arr[4] as List<Category>,
+                totalExpense = flows.totalExpense ?: 0L,
+                totalIncome = flows.totalIncome ?: 0L,
+                expenseByCategory = flows.expenseByCategory,
+                incomeByCategory = flows.incomeByCategory,
+                categories = flows.categories,
                 monthOffset = offset,
-                pendingReimbursable = (reimArr[0] as Double?) ?: 0.0,
-                reimbursed = (reimArr[1] as Double?) ?: 0.0,
-                reimbursableCount = reimArr[2] as Int
+                pendingReimbursable = reimFlows.pendingReimbursable ?: 0L,
+                reimbursed = reimFlows.reimbursed ?: 0L,
+                reimbursableCount = reimFlows.reimbursableCount
             )
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatsUiState())

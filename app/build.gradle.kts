@@ -12,8 +12,8 @@ android {
         applicationId = "com.jiyixia.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.2.1"
+        versionCode = 11
+        versionName = "1.3.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -100,4 +100,17 @@ dependencies {
     implementation("androidx.glance:glance-material3:1.0.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // 测试依赖
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("io.mockk:mockk:1.13.9")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("androidx.room:room-testing:2.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+}
+
+// Room Schema 导出配置（用于迁移测试）
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }

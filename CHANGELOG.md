@@ -1,6 +1,29 @@
 # 记一下 - 更新日志
 
-## v1.2.0 (2026-05-23) —— 悬浮气泡快速记账
+## v1.3.0 (2026-06-12) —— P1任务完成
+
+### 🔧 ProGuard/R8规则完善
+- 添加Room Entity、DAO、Compose的keep规则
+- 防止Release构建崩溃，确保混淆后功能正常
+
+### 🏗️ ViewModel类型安全重构
+- 移除@Suppress("UNCHECKED_CAST")模式
+- 引入data class包装combine Flow（HomeFlows、StatsFlows等）
+- 提升类型安全，减少运行时类型转换错误
+
+### ⚡ Repository层IO调度保障
+- 所有Flow操作符添加flowOn(Dispatchers.IO)
+- 所有suspend函数使用withContext(Dispatchers.IO)包装
+- 防止主线程数据库操作，提升应用稳定性
+
+### 📋 版本号管理规范
+- 建立版本管理流程，每次功能/修复完成同步升级版本号
+- 创建CHANGELOG.md记录版本变更历史
+- 版本号：1.2.1 → 1.3.0（versionCode: 10 → 11）
+
+---
+
+## v1.2.2 (2026-06-09) —— 代码质量提升
 
 ### 💬 悬浮气泡（新功能）
 - **悬浮气泡**：屏幕边缘显示小绿点，点击即刻记账
