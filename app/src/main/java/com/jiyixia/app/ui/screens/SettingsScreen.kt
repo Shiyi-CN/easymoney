@@ -30,12 +30,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jiyixia.app.JiYiXiaApp
+import com.jiyixia.app.data.RecordMode
 import com.jiyixia.app.data.ThemeMode
 import com.jiyixia.app.data.ThemePreferences
+import com.jiyixia.app.repository.RecordRepository
 import com.jiyixia.app.service.BubbleService
 import com.jiyixia.app.service.PaymentNotificationListener
 import com.jiyixia.app.ui.theme.*
 import com.jiyixia.app.util.BackupUtil
+import com.jiyixia.app.util.toAmountNumber
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -69,6 +72,8 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     var exportMsg by remember { mutableStateOf("") }
     var showClearDialog by remember { mutableStateOf(false) }
+    var showConfidenceDialog by remember { mutableStateOf(false) }
+    val confidenceThreshold by ThemePreferences.getConfidenceThreshold(context).collectAsState(initial = 80)
 
     val listenerEnabled = isNotificationListenerEnabled(context)
     val serviceConnected = PaymentNotificationListener.isServiceConnected
@@ -85,17 +90,25 @@ fun SettingsScreen(
         true
     }
 
-    TopAppBar(
-        title = { Text("设置", fontWeight = FontWeight.SemiBold, fontSize = 17.sp) },
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
-    )
+    Column(modifier = Modifier.fillMaxSize()) {
+        // ── 顶部标题
+        Surface(
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Text(
+                "设置",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 17.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+            )
+        }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(top = 64.dp, bottom = 32.dp) // 给 TopAppBar 留空
-    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 32.dp)
+        ) {
 
         // ═══ 自动记账 ═══════════════════════════════════════════════════════════
         SectionTitle("自动记账")
@@ -254,12 +267,56 @@ fun SettingsScreen(
                 SettingsDivider()
             }
 
+            // 记账模式
+            val recordMode by ThemePreferences.getRecordMode(context).collectAsState(initial = RecordMode.CONFIRM)
+            SettingsRow(
+                iconBg = Color(0xFFE3F2FD), icon = "⚡",
+                title = "记账模式",
+                desc = if (recordMode == RecordMode.QUICK) "极速模式：输入后500ms自动保存" else "确认模式：手动点击按钮保存",
+                trailing = {
+                    Switch(
+                        checked = recordMode == RecordMode.QUICK,
+                        onCheckedChange = { isQuick ->
+                            scope.launch {
+                                ThemePreferences.setRecordMode(
+                                    context,
+                                    if (isQuick) RecordMode.QUICK else RecordMode.CONFIRM
+                                )
+                            }
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary)
+                    )
+                }
+            )
+            SettingsDivider()
+
             // 自动确认规则
             SettingsRow(
                 iconBg = Color(0xFFE8F5E9), icon = "🤖",
                 title = "自动确认规则",
-                desc = "满足条件自动归类，无需手动",
-                trailing = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp) }
+                desc = "置信度 ≥ ${confidenceThreshold}% 时自动确认",
+                trailing = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp) },
+                onClick = { showConfidenceDialog = true }
+            )
+            SettingsDivider()
+
+            // 左滑删除模式
+            val swipeDeleteMode by ThemePreferences.getSwipeDeleteMode(context).collectAsState(initial = 0)
+            SettingsRow(
+                iconBg = Color(0xFFFFF3E0), icon = "👆",
+                title = "左滑删除模式",
+                desc = if (swipeDeleteMode == 0) "左滑直接删除（可撤销）" else "左滑显示删除按钮，点击确认",
+                trailing = {
+                    Switch(
+                        checked = swipeDeleteMode == 1,
+                        onCheckedChange = { showButton ->
+                            scope.launch {
+                                ThemePreferences.setSwipeDeleteMode(context, if (showButton) 1 else 0)
+                            }
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary)
+                    )
+                }
             )
         }
 
@@ -358,6 +415,26 @@ fun SettingsScreen(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                 )
             }
+            SettingsDivider()
+
+            // 截屏保护
+            val screenshotProtection by ThemePreferences.getScreenshotProtection(context).collectAsState(initial = false)
+            SettingsRow(
+                iconBg = Color(0xFFE8F5E9), icon = "🔒",
+                title = "截屏保护",
+                desc = if (screenshotProtection) "已开启，防止截屏录屏泄露数据" else "开启后禁止截屏录屏",
+                trailing = {
+                    Switch(
+                        checked = screenshotProtection,
+                        onCheckedChange = { enabled ->
+                            scope.launch {
+                                ThemePreferences.setScreenshotProtection(context, enabled)
+                            }
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary)
+                    )
+                }
+            )
             SettingsDivider()
 
             SettingsRow(
@@ -462,19 +539,27 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(24.dp))
     }
+    } // Scaffold
 
     // 清空数据确认弹窗
     if (showClearDialog) {
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
             title = { Text("清空所有数据？") },
-            text = { Text("此操作将永久删除所有记录，无法恢复。", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+            text = { Text("此操作将自动备份后永久删除所有记录。", color = MaterialTheme.colorScheme.onSurfaceVariant) },
             confirmButton = {
                 TextButton(onClick = {
                     val db = (context.applicationContext as JiYiXiaApp).database
+                    val repo = RecordRepository(db.recordDao(), db.categoryDao())
                     scope.launch {
-                        db.recordDao().deleteAll()
-                        showClearDialog = false
+                        val result = repo.safeDeleteAll(context)
+                        if (result.isSuccess) {
+                            showClearDialog = false
+                            // 可以在这里显示成功提示
+                        } else {
+                            // 可以在这里显示错误提示
+                            showClearDialog = false
+                        }
                     }
                 }) {
                     Text("删除", color = ExpenseRed, fontWeight = FontWeight.SemiBold)
@@ -482,6 +567,51 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showClearDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    // 置信度阈值设置弹窗
+    if (showConfidenceDialog) {
+        var sliderValue: Float by remember { mutableStateOf(confidenceThreshold.toFloat()) }
+        AlertDialog(
+            onDismissRequest = { showConfidenceDialog = false },
+            title = { Text("自动确认阈值") },
+            text = {
+                Column {
+                    Text("置信度 ≥ ${sliderValue.toInt()}% 时自动确认记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(16.dp))
+                    Text("当前阈值：${sliderValue.toInt()}%", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Slider(
+                        value = sliderValue,
+                        onValueChange = { sliderValue = it },
+                        valueRange = 50f..100f,
+                        steps = 10,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("50%", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("100%", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        ThemePreferences.setConfidenceThreshold(context, sliderValue.toInt())
+                    }
+                    showConfidenceDialog = false
+                }) {
+                    Text("确定")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfidenceDialog = false }) {
                     Text("取消")
                 }
             }
@@ -586,7 +716,7 @@ private suspend fun exportCsv(app: JiYiXiaApp): String? = withContext(Dispatcher
             records.forEach { r ->
                 val cat = categories.find { it.id == r.categoryId }?.name ?: "未知"
                 val type = if (r.type == 0) "支出" else "收入"
-                appendLine("${sdf.format(Date(r.date))},$cat,${r.amount},$type,${r.note}")
+                appendLine("${sdf.format(Date(r.date))},$cat,${r.amount.toAmountNumber()},$type,${r.note}")
             }
         }
 

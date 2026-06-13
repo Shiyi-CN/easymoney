@@ -25,6 +25,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jiyixia.app.data.entity.Category
 import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.ui.theme.*
+import com.jiyixia.app.util.toAmountString
 import com.jiyixia.app.viewmodel.HomeViewModel
 import java.text.SimpleDateFormat
 import java.util.*
@@ -237,7 +238,7 @@ private fun ReimbursableRecordItem(
             // 金额和操作
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    "¥${String.format("%.2f", record.amount)}",
+                    record.amount.toAmountString(),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = amountColor
@@ -246,15 +247,16 @@ private fun ReimbursableRecordItem(
                 if (!isReimbursed) {
                     Button(
                         onClick = onMarkReimbursed,
-                        modifier = Modifier.height(28.dp),
+                        modifier = Modifier.height(32.dp),
                         shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color(0xFF2E7D32)
                         )
                     ) {
                         Text(
                             "标记已报销",
-                            fontSize = 10.sp,
+                            fontSize = 11.sp,
                             color = Color.White
                         )
                     }

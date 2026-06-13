@@ -89,61 +89,66 @@
 ## 🟢 P2 - v1.3.0开发中
 
 ### C1 提取SmartParseUseCase
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：将VoiceCategorizer重命名为SmartParseUseCase并移入domain/目录，三个入口统一调用
 - **改动范围**：新建domain/usecase/SmartParseUseCase.kt + 修改所有调用方
-- **预计时间**：2-3天
+- **完成时间**：2026-06-13
 
 ### C2 添加输入验证层
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：在UseCase层添加输入验证（防止负数、极大值、超长备注）
-- **改动范围**：新建验证逻辑
-- **预计时间**：4小时
+- **改动范围**：新建InputValidationUseCase.kt + 修改ViewModels.kt
+- **完成时间**：2026-06-12
 
 ### C3 全局错误处理
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：ViewModel层统一捕获异常，向用户展示友好错误提示（Snackbar）
-- **改动范围**：所有ViewModel
-- **预计时间**：4小时
+- **改动范围**：ViewModels.kt
+- **完成时间**：2026-06-12
 
 ### C4 deleteAll()安全化
-- **状态**：待开始
-- **描述**：移除DAO层的deleteAll()或改为@Transaction + 先自动备份再删除
-- **改动范围**：RecordDao.kt
-- **预计时间**：1小时
+- **状态**：✅ 已完成
+- **描述**：移除DAO层的deleteAll()，改为Repository层的safeDeleteAll()方法，先自动备份再删除
+- **改动范围**：RecordDao.kt + RecordRepository.kt + SettingsScreen.kt
+- **完成时间**：2026-06-12
 
 ### #1 版本号管理规范
 - **状态**：待开始（合并到B6）
 
 ### #4 快速记账模式开关
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：设置页新增「记账模式」开关，支持极速模式（500ms自动保存）和确认模式（手动点按钮保存）
-- **改动范围**：SettingsScreen.kt + QuickRecordScreen.kt + DataStore
+- **改动范围**：SettingsScreen.kt + ThemePreferences.kt
 - **验收标准**：两种模式可切换，偏好持久化
+- **完成时间**：2026-06-12
 
 ### #5 截屏保护
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：FLAG_SECURE 防止截屏录屏泄露财务数据，设置页开关控制
-- **改动范围**：MainActivity.kt + SettingsScreen.kt
+- **改动范围**：MainActivity.kt + SettingsScreen.kt + ThemePreferences.kt
 - **验收标准**：开关控制截屏保护，关闭后允许截屏
+- **完成时间**：2026-06-12
 
 ### #7 左滑删除记录（含撤销）
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：首页记录列表用SwipeToDismiss实现左滑删除，支持撤销（Snackbar + 延迟真正删除）
 - **改动范围**：HomeScreen.kt
 - **验收标准**：左滑出现删除操作，支持撤销，交互流畅
+- **完成时间**：2026-06-12
 
 ### #8 识别日志脱敏
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：设置页识别日志只显示时间+分类+金额，不暴露原始通知全文
-- **改动范围**：SettingsScreen.kt + PaymentNotificationListener.kt
+- **改动范围**：PaymentNotificationListener.kt
 - **验收标准**：日志不包含完整通知文本
+- **完成时间**：2026-06-12
 
 ### #9 自动确认规则
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：设置页「自动确认规则」功能实现，置信度阈值可调（默认80%）
-- **改动范围**：SettingsScreen.kt + DataStore + PaymentNotificationListener.kt
+- **改动范围**：SettingsScreen.kt + ThemePreferences.kt
 - **验收标准**：阈值可配置，超过阈值的记录自动确认
+- **完成时间**：2026-06-12
 
 ---
 
@@ -330,4 +335,4 @@
 
 ---
 
-*最后更新：2026-06-12*
+*最后更新：2026-06-13*

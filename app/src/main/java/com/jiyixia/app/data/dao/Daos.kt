@@ -38,21 +38,21 @@ interface RecordDao {
     fun getPendingConfirmCount(): Flow<Int>
 
     @Query("""
-        SELECT SUM(amount) FROM records 
+        SELECT SUM(amount) FROM records
         WHERE type = :type AND date BETWEEN :start AND :end
     """)
-    fun getSumByTypeAndDateRange(type: Int, start: Long, end: Long): Flow<Double?>
+    fun getSumByTypeAndDateRange(type: Int, start: Long, end: Long): Flow<Long?>
 
     @Query("""
-        SELECT categoryId, SUM(amount) as amount FROM records 
-        WHERE type = 0 AND date BETWEEN :start AND :end 
+        SELECT categoryId, SUM(amount) as amount FROM records
+        WHERE type = 0 AND date BETWEEN :start AND :end
         GROUP BY categoryId ORDER BY amount DESC
     """)
     fun getExpenseGroupByCategory(start: Long, end: Long): Flow<List<CategorySum>>
 
     @Query("""
-        SELECT categoryId, SUM(amount) as amount FROM records 
-        WHERE type = 1 AND date BETWEEN :start AND :end 
+        SELECT categoryId, SUM(amount) as amount FROM records
+        WHERE type = 1 AND date BETWEEN :start AND :end
         GROUP BY categoryId ORDER BY amount DESC
     """)
     fun getIncomeGroupByCategory(start: Long, end: Long): Flow<List<CategorySum>>
@@ -69,22 +69,27 @@ interface RecordDao {
     @Query("DELETE FROM records WHERE isPendingConfirm = 1")
     suspend fun deleteAllPending()
 
+    /**
+     * 事务删除所有记录
+     * 注意：此方法会直接删除所有数据，请确保在调用前已备份
+     */
+    @Transaction
     @Query("DELETE FROM records")
-    suspend fun deleteAll()
+    suspend fun deleteAllInTransaction()
 
     // ── 报销相关查询 ──
 
     /** 待报销金额（isReimbursable=1 且未报销） */
     @Query("SELECT SUM(amount) FROM records WHERE type = 0 AND isReimbursable = 1 AND isReimbursed = 0 AND date BETWEEN :start AND :end")
-    fun getReimbursableSumByDateRange(start: Long, end: Long): Flow<Double?>
+    fun getReimbursableSumByDateRange(start: Long, end: Long): Flow<Long?>
 
     /** 全部待报销金额 */
     @Query("SELECT SUM(amount) FROM records WHERE type = 0 AND isReimbursable = 1 AND isReimbursed = 0")
-    fun getReimbursableSumAll(): Flow<Double?>
+    fun getReimbursableSumAll(): Flow<Long?>
 
     /** 已报销金额（本月） */
     @Query("SELECT SUM(amount) FROM records WHERE type = 0 AND isReimbursable = 1 AND isReimbursed = 1 AND date BETWEEN :start AND :end")
-    fun getReimbursedSumByDateRange(start: Long, end: Long): Flow<Double?>
+    fun getReimbursedSumByDateRange(start: Long, end: Long): Flow<Long?>
 
     /** 标记已报销 / 取消已报销 */
     @Query("UPDATE records SET isReimbursed = :reimbursed WHERE id = :id")
@@ -97,5 +102,5 @@ interface RecordDao {
 
 data class CategorySum(
     val categoryId: Long,
-    val amount: Double
+    val amount: Long
 )

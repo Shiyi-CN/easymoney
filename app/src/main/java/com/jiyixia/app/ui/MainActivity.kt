@@ -1,6 +1,7 @@
 package com.jiyixia.app.ui
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -37,6 +39,16 @@ class MainActivity : ComponentActivity() {
         setContent {
             val context = LocalContext.current
             val themeMode by ThemePreferences.getThemeMode(context).collectAsState(initial = ThemeMode.FOLLOW_SYSTEM)
+            val screenshotProtection by ThemePreferences.getScreenshotProtection(context).collectAsState(initial = false)
+
+            // 截屏保护
+            LaunchedEffect(screenshotProtection) {
+                if (screenshotProtection) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
 
             JiYiXiaTheme(themeMode = themeMode) {
                 MainApp()
@@ -67,7 +79,10 @@ fun MainApp() {
                         selected = selected,
                         onClick = {
                             navController.navigate(screen.route) {
-                                popUpTo(Screen.Home.route) { saveState = true }
+                                // 回到首页时，清除所有二级页面
+                                popUpTo(Screen.Home.route) {
+                                    saveState = false  // 不保存二级页面状态
+                                }
                                 launchSingleTop = true
                                 restoreState = true
                             }
@@ -97,7 +112,13 @@ fun MainApp() {
                     }
                 )
             }
-            composable(Screen.Stats.route) { StatsScreen() }
+            composable(Screen.Stats.route) {
+                StatsScreen(
+                    onNavigateToReimbursableRecords = {
+                        navController.navigate(Screen.ReimbursableRecords.route)
+                    }
+                )
+            }
             composable(Screen.Settings.route) {
                 SettingsScreen(
                     onNavigateToCategoryManagement = {

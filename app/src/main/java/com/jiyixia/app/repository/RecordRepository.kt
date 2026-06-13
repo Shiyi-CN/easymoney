@@ -1,10 +1,12 @@
 package com.jiyixia.app.repository
 
+import android.content.Context
 import com.jiyixia.app.data.dao.CategoryDao
 import com.jiyixia.app.data.dao.CategorySum
 import com.jiyixia.app.data.dao.RecordDao
 import com.jiyixia.app.data.entity.Category
 import com.jiyixia.app.data.entity.Record
+import com.jiyixia.app.util.BackupUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
@@ -38,6 +40,49 @@ class RecordRepository(
     }
     suspend fun deleteRecord(record: Record) = withContext(Dispatchers.IO) {
         recordDao.delete(record)
+    }
+
+    /**
+     * 安全删除所有记录：先自动备份，再删除
+     * @param context Android Context，用于备份
+     * @return 备份结果，成功后自动删除
+     */
+    suspend fun safeDeleteAll(context: Context): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            // 1. 先备份
+            val backupResult = BackupUtil.backup(context)
+            if (backupResult.isFailure) {
+                return@withContext backupResult
+            }
+
+            // 2. 备份成功后，删除所有记录
+            // 由于 DAO 层已移除 deleteAll()，这里直接执行 SQL
+            // 注意：这里需要使用 RecordDao 的原始 SQL 执行能力
+            // 但为了保持 DAO 层的简洁性，我们使用事务方式
+            recordDao.deleteAllInTransaction()
+
+            Result.success(backupResult.getOrNull() ?: "备份成功")
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 安全删除所有待确认记录：先自动备份，再删除
+     * @param context Android Context，用于备份
+     * @return 备份结果，成功后自动删除
+     */
+    suspend fun safeDeleteAllPending(context: Context): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val backupResult = BackupUtil.backup(context)
+            if (backupResult.isFailure) {
+                return@withContext backupResult
+            }
+            recordDao.deleteAllPending()
+            Result.success(backupResult.getOrNull() ?: "备份成功")
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     // Categories

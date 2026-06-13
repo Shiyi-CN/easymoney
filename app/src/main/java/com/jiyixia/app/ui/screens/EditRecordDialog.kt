@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -13,7 +12,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -21,6 +19,8 @@ import androidx.compose.ui.unit.sp
 import com.jiyixia.app.data.entity.Category
 import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.ui.theme.*
+import com.jiyixia.app.util.toAmountCents
+import com.jiyixia.app.util.toAmountNumber
 
 /**
  * 编辑记录对话框
@@ -32,8 +32,8 @@ fun EditRecordDialog(
     onDismiss: () -> Unit,
     onSave: (Record) -> Unit
 ) {
-    var amountText by remember { mutableStateOf(record.amount.toString()) }
-    var selectedCategoryId by remember { mutableStateOf(record.categoryId) }
+    var amountText by remember { mutableStateOf(record.amount.toAmountNumber()) }
+    var selectedCategoryId by remember { mutableLongStateOf(record.categoryId) }
     var noteText by remember { mutableStateOf(record.note) }
     var isReimbursable by remember { mutableStateOf(record.isReimbursable) }
     var reimbursementTarget by remember { mutableStateOf(record.reimbursementTarget) }
@@ -161,10 +161,10 @@ fun EditRecordDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    val amount = amountText.toDoubleOrNull()
-                    if (amount != null && amount > 0) {
+                    val amountCents = amountText.toAmountCents()
+                    if (amountCents > 0) {
                         val updatedRecord = record.copy(
-                            amount = amount,
+                            amount = amountCents,
                             categoryId = selectedCategoryId,
                             note = noteText,
                             isReimbursable = isReimbursable,

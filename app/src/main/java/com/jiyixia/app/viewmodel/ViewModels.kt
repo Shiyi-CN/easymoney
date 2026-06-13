@@ -7,6 +7,7 @@ import com.jiyixia.app.JiYiXiaApp
 import com.jiyixia.app.data.dao.CategorySum
 import com.jiyixia.app.data.entity.Category
 import com.jiyixia.app.data.entity.Record
+import com.jiyixia.app.domain.usecase.InputValidationUseCase
 import com.jiyixia.app.repository.RecordRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -82,6 +83,15 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val _selectedType = MutableStateFlow(0)
+    private val _errorMessage = MutableStateFlow<String?>(null)
+
+    /** 错误信息流，UI层可以订阅显示Snackbar */
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    /** 清除错误信息 */
+    fun clearError() {
+        _errorMessage.value = null
+    }
 
     // 当月起止
     private fun monthBounds(offset: Int = 0): Pair<Long, Long> {
@@ -139,46 +149,106 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun setSelectedType(type: Int) { _selectedType.value = type }
 
     fun addRecord(amount: Long, categoryId: Long, note: String, type: Int, isPendingConfirm: Boolean = false, confidence: Int = 100, isReimbursable: Boolean = false, reimbursementTarget: String = "") {
+        // 输入验证
+        if (!InputValidationUseCase.isRecordValid(amount, categoryId, note)) {
+            _errorMessage.value = "输入数据无效，请检查金额、分类和备注"
+            return
+        }
+
         viewModelScope.launch {
-            repo.insertRecord(
-                Record(
-                    type = type, amount = amount, categoryId = categoryId,
-                    note = note, date = System.currentTimeMillis(),
-                    isPendingConfirm = isPendingConfirm, confidence = confidence,
-                    isReimbursable = isReimbursable,
-                    reimbursementTarget = reimbursementTarget
+            try {
+                repo.insertRecord(
+                    Record(
+                        type = type, amount = amount, categoryId = categoryId,
+                        note = note, date = System.currentTimeMillis(),
+                        isPendingConfirm = isPendingConfirm, confidence = confidence,
+                        isReimbursable = isReimbursable,
+                        reimbursementTarget = reimbursementTarget
+                    )
                 )
-            )
+            } catch (e: Exception) {
+                _errorMessage.value = "添加记录失败：${e.message}"
+            }
         }
     }
 
-    fun deleteRecord(record: Record) { viewModelScope.launch { repo.deleteRecord(record) } }
+    fun deleteRecord(record: Record) {
+        viewModelScope.launch {
+            try {
+                repo.deleteRecord(record)
+            } catch (e: Exception) {
+                _errorMessage.value = "删除记录失败：${e.message}"
+            }
+        }
+    }
+
+    fun restoreRecord(record: Record) {
+        viewModelScope.launch {
+            try {
+                repo.insertRecord(record)
+            } catch (e: Exception) {
+                _errorMessage.value = "恢复记录失败：${e.message}"
+            }
+        }
+    }
 
     fun updateRecord(record: Record) {
         viewModelScope.launch {
-            repo.updateRecord(record)
+            try {
+                repo.updateRecord(record)
+            } catch (e: Exception) {
+                _errorMessage.value = "更新记录失败：${e.message}"
+            }
         }
     }
 
     fun confirmRecord(record: Record) {
         viewModelScope.launch {
-            repo.updateRecord(record.copy(isPendingConfirm = false, confidence = 100))
+            try {
+                repo.updateRecord(record.copy(isPendingConfirm = false, confidence = 100))
+            } catch (e: Exception) {
+                _errorMessage.value = "确认记录失败：${e.message}"
+            }
         }
     }
 
     /** 一键确认所有待确认记录 */
     fun confirmAllRecords() {
         viewModelScope.launch {
-            val pending = uiState.value.records.filter { it.isPendingConfirm }
-            pending.forEach { repo.updateRecord(it.copy(isPendingConfirm = false, confidence = 100)) }
+            try {
+                val pending = uiState.value.records.filter { it.isPendingConfirm }
+                pending.forEach { repo.updateRecord(it.copy(isPendingConfirm = false, confidence = 100)) }
+            } catch (e: Exception) {
+                _errorMessage.value = "确认记录失败：${e.message}"
+            }
         }
     }
 
     /** 标记已报销 / 取消已报销 */
     fun markReimbursed(record: Record) {
         viewModelScope.launch {
-            val newState = !record.isReimbursed
-            repo.setReimbursed(record.id, newState)
+            try {
+                val newState = !record.isReimbursed
+                repo.setReimbursed(record.id, newState)
+
+                // 标记为已报销时，创建一条收入记录
+                if (newState) {
+                    val categoryName = uiState.value.categories
+                        .find { it.id == record.categoryId }?.name ?: "报销"
+                    val incomeRecord = Record(
+                        type = 1,  // 收入
+                        amount = record.amount,
+                        categoryId = record.categoryId,
+                        note = "报销到账·$categoryName",
+                        date = System.currentTimeMillis(),
+                        isReimbursable = false,
+                        reimbursementTarget = ""
+                    )
+                    repo.insertRecord(incomeRecord)
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = "标记报销失败：${e.message}"
+            }
         }
     }
 
@@ -186,19 +256,31 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addCategory(category: Category) {
         viewModelScope.launch {
-            repo.insertCategory(category)
+            try {
+                repo.insertCategory(category)
+            } catch (e: Exception) {
+                _errorMessage.value = "添加分类失败：${e.message}"
+            }
         }
     }
 
     fun updateCategory(category: Category) {
         viewModelScope.launch {
-            repo.updateCategory(category)
+            try {
+                repo.updateCategory(category)
+            } catch (e: Exception) {
+                _errorMessage.value = "更新分类失败：${e.message}"
+            }
         }
     }
 
     fun deleteCategory(category: Category) {
         viewModelScope.launch {
-            repo.deleteCategory(category)
+            try {
+                repo.deleteCategory(category)
+            } catch (e: Exception) {
+                _errorMessage.value = "删除分类失败：${e.message}"
+            }
         }
     }
 }

@@ -12,8 +12,8 @@ android {
         applicationId = "com.jiyixia.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 11
-        versionName = "1.3.0"
+        versionCode = 12
+        versionName = "1.3.1"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -66,7 +66,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
     // Compose BOM
-    val composeBom = platform("androidx.compose:compose-bom:2024.01.00")
+    val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)
 
     implementation("androidx.core:core-ktx:1.12.0")

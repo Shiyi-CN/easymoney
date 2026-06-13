@@ -29,7 +29,10 @@ import com.jiyixia.app.ui.theme.IncomeGreen
 import com.jiyixia.app.ui.theme.JiYiXiaTheme
 import com.jiyixia.app.ui.theme.Surface2
 import com.jiyixia.app.ui.theme.WarningOrange
-import com.jiyixia.app.util.VoiceCategorizer
+import com.jiyixia.app.util.CategoryEmoji
+import com.jiyixia.app.domain.usecase.InputValidationUseCase
+import com.jiyixia.app.domain.usecase.SmartParseUseCase
+import com.jiyixia.app.util.toCents
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -57,13 +60,6 @@ class BubbleInputActivity : ComponentActivity() {
         }
     }
 }
-
-private val categoryEmojiMap = mapOf(
-    "餐饮" to "🍜", "交通" to "🚇", "购物" to "🛒", "娱乐" to "🎮",
-    "居住" to "🏠", "医疗" to "🏥", "教育" to "📚", "其他" to "📋",
-    "工资" to "💰", "奖金" to "🏆", "理财" to "📈", "兼职" to "💼",
-    "红包" to "🧧"
-)
 
 @Composable
 private fun BubbleInputScreen(onDismiss: () -> Unit) {
@@ -98,7 +94,7 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
 
         val nameToId = allCategories.associate { it.name to it.id }
         val defaultCategoryId = allCategories.firstOrNull()?.id ?: 0L
-        val parsed = VoiceCategorizer.parse(
+        val parsed = SmartParseUseCase.parse(
             text = inputText,
             categoryNameToId = nameToId,
             defaultCategoryId = defaultCategoryId
@@ -118,16 +114,31 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
     }
 
     // 保存记录
+    var validationError by remember { mutableStateOf<String?>(null) }
+
     fun saveRecord() {
         val amount = parsedAmount.toDoubleOrNull() ?: return
         val category = parsedCategory ?: return
+
+        // 输入验证
+        val amountCents = amount.toCents()
+        val validationResults = InputValidationUseCase.validateRecord(
+            amount = amountCents,
+            categoryId = category.id,
+            note = parsedNote
+        )
+        val firstError = validationResults.firstOrNull { it is com.jiyixia.app.domain.usecase.ValidationResult.Error }
+        if (firstError != null) {
+            validationError = (firstError as com.jiyixia.app.domain.usecase.ValidationResult.Error).message
+            return
+        }
 
         scope.launch {
             val db = app.database
             db.recordDao().insert(
                 Record(
                     type = if (parsedIsExpense) 0 else 1,
-                    amount = amount,
+                    amount = amountCents,
                     categoryId = category.id,
                     note = parsedNote,
                     date = System.currentTimeMillis(),
@@ -171,7 +182,7 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
             // 输入框
             OutlinedTextField(
                 value = inputText,
-                onValueChange = { inputText = it },
+                onValueChange = { inputText = it; validationError = null },
                 placeholder = { Text("午餐 38", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -182,6 +193,16 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
                 )
             )
             Spacer(Modifier.height(16.dp))
+
+            // 验证错误提示
+            if (validationError != null) {
+                Text(
+                    "⚠️ ${validationError}",
+                    color = WarningOrange,
+                    fontSize = 12.sp,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                )
+            }
 
             // 解析结果预览
             if (isParsed) {
@@ -204,7 +225,7 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            categoryEmojiMap[parsedCategory?.name] ?: "📋",
+                            CategoryEmoji.get(parsedCategory?.name),
                             fontSize = 18.sp
                         )
                     }

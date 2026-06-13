@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jiyixia.app.data.dao.CategorySum
 import com.jiyixia.app.ui.theme.*
+import com.jiyixia.app.util.toAmountString
 import com.jiyixia.app.viewmodel.StatsViewModel
 import com.jiyixia.app.viewmodel.StatsViewModelFactory
 import java.util.*
@@ -44,6 +45,7 @@ private enum class StatsTab(val label: String) { Expense("支出分析"), Income
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun StatsScreen(
+    onNavigateToReimbursableRecords: () -> Unit = {},
     vm: StatsViewModel = viewModel(
         factory = StatsViewModelFactory(LocalContext.current.applicationContext as Application)
     )
@@ -132,9 +134,9 @@ fun StatsScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 val balance = uiState.totalIncome - uiState.totalExpense
-                MiniSummaryCard("总支出", "¥${fmtAmount(uiState.totalExpense)}", ExpenseRed, Modifier.weight(1f))
-                MiniSummaryCard("总收入", "¥${fmtAmount(uiState.totalIncome)}", IncomeGreen, Modifier.weight(1f))
-                MiniSummaryCard("结余", "¥${fmtAmount(balance)}", MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+                MiniSummaryCard("总支出", fmtAmount(uiState.totalExpense), ExpenseRed, Modifier.weight(1f))
+                MiniSummaryCard("总收入", fmtAmount(uiState.totalIncome), IncomeGreen, Modifier.weight(1f))
+                MiniSummaryCard("结余", fmtAmount(balance), MaterialTheme.colorScheme.primary, Modifier.weight(1f))
             }
 
             // ── 报销统计卡
@@ -143,7 +145,8 @@ fun StatsScreen(
                     pending = uiState.pendingReimbursable,
                     reimbursed = uiState.reimbursed,
                     count = uiState.reimbursableCount,
-                    totalExpense = uiState.totalExpense
+                    totalExpense = uiState.totalExpense,
+                    onClick = onNavigateToReimbursableRecords
                 )
             }
 
@@ -173,7 +176,7 @@ fun StatsScreen(
 }
 
 // ── 辅助：金额格式 ─────────────────────────────────────────────────────────────
-private fun fmtAmount(v: Double) = String.format("%.0f", v)
+private fun fmtAmount(v: Long) = v.toAmountString()
 
 // ── 月份切换按钮 ───────────────────────────────────────────────────────────────
 @Composable
@@ -210,10 +213,11 @@ private fun MiniSummaryCard(title: String, value: String, color: Color, modifier
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ReimbursableStatsCard(
-    pending: Double,
-    reimbursed: Double,
+    pending: Long,
+    reimbursed: Long,
     count: Int,
-    totalExpense: Double
+    totalExpense: Long,
+    onClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -226,6 +230,7 @@ private fun ReimbursableStatsCard(
                     listOf(Color(0xFF1565C0).copy(alpha = 0.08f), Color(0xFF2E7D32).copy(alpha = 0.08f))
                 )
             )
+            .clickable(onClick = onClick)
             .padding(14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -251,7 +256,7 @@ private fun ReimbursableStatsCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "¥${fmtAmount(pending)}",
+                    fmtAmount(pending),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF1565C0)
@@ -284,13 +289,13 @@ private fun ReimbursableStatsCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "¥${fmtAmount(reimbursed)}",
+                    fmtAmount(reimbursed),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF2E7D32)
                 )
                 if (totalExpense > 0) {
-                    val pct = ((pending / totalExpense) * 100).toInt()
+                    val pct = ((pending.toFloat() / totalExpense) * 100).toInt()
                     Text(
                         "占支出 ${pct}%",
                         fontSize = 11.sp,
@@ -335,7 +340,7 @@ private fun ReimbursableStatsCard(
 @Composable
 private fun CategoryTab(
     data: List<CategorySum>,
-    total: Double,
+    total: Long,
     categories: List<com.jiyixia.app.data.entity.Category>,
     amountColor: Color,
     title: String,
@@ -368,7 +373,7 @@ private fun CategoryTab(
             DonutChart(data = data, total = total, modifier = Modifier.fillMaxSize())
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("总计", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("¥${fmtAmount(total)}", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(fmtAmount(total), fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -378,7 +383,7 @@ private fun CategoryTab(
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
             data.take(5).forEachIndexed { index, item ->
                 val cat = categories.find { it.id == item.categoryId }
-                val pct = if (total > 0) (item.amount / total * 100).toInt() else 0
+                val pct = if (total > 0) (item.amount.toFloat() / total * 100).toInt() else 0
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier.size(8.dp).clip(RoundedCornerShape(2.dp))
@@ -387,7 +392,7 @@ private fun CategoryTab(
                     Spacer(Modifier.width(8.dp))
                     Text(cat?.name ?: "其他", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
                     Text("$pct%", fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(end = 6.dp))
-                    Text("¥${fmtAmount(item.amount)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(fmtAmount(item.amount), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -402,7 +407,7 @@ private fun CategoryTab(
         data.take(6).forEachIndexed { index, item ->
             val cat = categories.find { it.id == item.categoryId }
             val catName = cat?.name ?: "其他"
-            val pct = if (total > 0) (item.amount / total).toFloat() else 0f
+            val pct = if (total > 0) item.amount.toFloat() / total else 0f
             val emoji = mapOf(
                 "餐饮" to "🍜", "交通" to "🚇", "购物" to "🛒", "娱乐" to "🎮",
                 "居住" to "🏠", "医疗" to "🏥", "教育" to "📚", "其他" to "📋",
@@ -422,7 +427,7 @@ private fun CategoryTab(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("$emoji $catName", fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                    Text("¥${fmtAmount(item.amount)}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = amountColor)
+                    Text(fmtAmount(item.amount), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = amountColor)
                 }
                 Spacer(Modifier.height(6.dp))
                 Box(
@@ -457,7 +462,7 @@ private fun TrendPlaceholder() {
 //  环形图（Canvas）
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
-private fun DonutChart(data: List<CategorySum>, total: Double, modifier: Modifier = Modifier) {
+private fun DonutChart(data: List<CategorySum>, total: Long, modifier: Modifier = Modifier) {
     androidx.compose.foundation.Canvas(modifier = modifier) {
         val strokeWidth = 20f
         val diameter = size.minDimension
@@ -473,7 +478,7 @@ private fun DonutChart(data: List<CategorySum>, total: Double, modifier: Modifie
 
         var startAngle = -90f
         data.forEachIndexed { index, item ->
-            val sweep = if (total > 0) (item.amount / total * 360).toFloat() else 0f
+            val sweep = if (total > 0) (item.amount.toFloat() / total * 360) else 0f
             drawArc(
                 color = ChartColors[index % ChartColors.size],
                 startAngle = startAngle,

@@ -1,15 +1,17 @@
-package com.jiyixia.app.util
+package com.jiyixia.app.domain.usecase
 
 /**
- * 语音分类引擎 —— 从语音识别文本中提取金额和自动分类
+ * 智能文本解析 UseCase —— 从文本中提取金额、自动分类、生成备注
  *
  * 设计目标（来自设计文档）：
  * - "午餐 38"     → 金额=38.00,  分类=餐饮
  * - "打车 25 块 5" → 金额=25.50,  分类=交通
- * - 使用 Android 本地语音识别（SpeechRecognizer），不联网
+ * - 使用本地规则引擎，不联网
  * - 简单的关键词匹配准确率已经 > 90%（设计文档第182行）
+ *
+ * 统一入口：语音输入、手动输入、通知自动记账都调用此 UseCase
  */
-object VoiceCategorizer {
+object SmartParseUseCase {
 
     /**
      * 解析结果
@@ -140,9 +142,9 @@ object VoiceCategorizer {
     // ═══════════════════════════════════════════════════════════
 
     /**
-     * 解析语音文本，返回金额 + 分类 + 备注
+     * 解析文本，返回金额 + 分类 + 备注
      *
-     * @param text 语音识别后的文本，如 "午餐 38 块"、"打车 25 块 5"
+     * @param text 识别后的文本，如 "午餐 38 块"、"打车 25 块 5"
      * @param categoryNameToId 分类名称 → ID 的映射（由调用方提供）
      * @param defaultCategoryId 默认分类 ID（无法识别时使用）
      */
@@ -167,33 +169,25 @@ object VoiceCategorizer {
         // 4. 判断是否包含"报销"关键词
         val hasReimbursementKeyword = listOf("报销", "可报销", "能报销", "要报销").any { cleaned.contains(it) }
 
-        // 5. 收入分类优先（如"报销到账"、"工资"等）
-        //    收入分类不标记为可报销
-        if (incomeCategory != null && expenseCategory == null) {
-            val note = buildNote(cleaned, incomeCategory)
-            return ParsedResult(
-                amount = amountResult.value,
-                amountText = amountResult.text,
-                categoryName = incomeCategory,
-                categoryId = categoryNameToId[incomeCategory] ?: defaultCategoryId,
-                note = note,
-                isExpense = false,
-                confidence = 85,
-                isReimbursable = false, // 收入不标记为可报销
-                reimbursementTarget = ""
-            )
-        }
+        // 4.1 检测"XX公司/分公司/单位/部门"模式（自动识别为可报销）
+        val companyReimbursementResult = detectCompanyReimbursement(cleaned)
+        val hasCompanyPattern = companyReimbursementResult.first
 
-        // 6. 支出分类 + 报销关键词 = 支出+可报销
-        if (expenseCategory != null && hasReimbursementKeyword) {
+        // 5. 明确的收入关键词（"到账"、"收入"、"收到"等），表示这是真正的收入而非可报销支出
+        val hasExplicitIncomeKeyword = listOf("到账", "收入", "收到", "入账", "进账").any { cleaned.contains(it) }
+
+        // 6. 报销关键词优先：如果有报销关键词且没有明确收入关键词，走支出+可报销路径
+        //    例："报销 200" → 支出+可报销，而非收入
+        //    例："报销到账 200" → 收入（有"到账"关键词）
+        if (hasReimbursementKeyword && !hasExplicitIncomeKeyword) {
+            val category = expenseCategory ?: "其他"
             val reimbursementResult = detectReimbursement(cleaned)
-            val note = buildNote(cleaned, expenseCategory)
             return ParsedResult(
                 amount = amountResult.value,
                 amountText = amountResult.text,
-                categoryName = expenseCategory,
-                categoryId = categoryNameToId[expenseCategory] ?: defaultCategoryId,
-                note = note,
+                categoryName = category,
+                categoryId = categoryNameToId[category] ?: defaultCategoryId,
+                note = cleaned,  // 备注直接使用原始输入
                 isExpense = true,
                 confidence = 85,
                 isReimbursable = true,
@@ -201,15 +195,61 @@ object VoiceCategorizer {
             )
         }
 
-        // 7. 纯支出（没有报销关键词）
-        if (expenseCategory != null) {
-            val note = buildNote(cleaned, expenseCategory)
+        // 6.1 公司名模式：如果有"XX公司/分公司"模式且没有明确收入关键词，走支出+可报销路径
+        if (hasCompanyPattern && !hasExplicitIncomeKeyword) {
+            val category = expenseCategory ?: "其他"
+            return ParsedResult(
+                amount = amountResult.value,
+                amountText = amountResult.text,
+                categoryName = category,
+                categoryId = categoryNameToId[category] ?: defaultCategoryId,
+                note = cleaned,  // 备注直接使用原始输入
+                isExpense = true,
+                confidence = 80,
+                isReimbursable = true,
+                reimbursementTarget = companyReimbursementResult.second
+            )
+        }
+
+        // 7. 收入分类（如"工资"、"报销到账"等）
+        if (incomeCategory != null && expenseCategory == null) {
+            return ParsedResult(
+                amount = amountResult.value,
+                amountText = amountResult.text,
+                categoryName = incomeCategory,
+                categoryId = categoryNameToId[incomeCategory] ?: defaultCategoryId,
+                note = cleaned,  // 备注直接使用原始输入
+                isExpense = false,
+                confidence = 85,
+                isReimbursable = false,
+                reimbursementTarget = ""
+            )
+        }
+
+        // 8. 支出分类 + 报销关键词 = 支出+可报销
+        if (expenseCategory != null && hasReimbursementKeyword) {
+            val reimbursementResult = detectReimbursement(cleaned)
             return ParsedResult(
                 amount = amountResult.value,
                 amountText = amountResult.text,
                 categoryName = expenseCategory,
                 categoryId = categoryNameToId[expenseCategory] ?: defaultCategoryId,
-                note = note,
+                note = cleaned,  // 备注直接使用原始输入
+                isExpense = true,
+                confidence = 85,
+                isReimbursable = true,
+                reimbursementTarget = reimbursementResult.second
+            )
+        }
+
+        // 9. 纯支出（没有报销关键词）
+        if (expenseCategory != null) {
+            return ParsedResult(
+                amount = amountResult.value,
+                amountText = amountResult.text,
+                categoryName = expenseCategory,
+                categoryId = categoryNameToId[expenseCategory] ?: defaultCategoryId,
+                note = cleaned,  // 备注直接使用原始输入
                 isExpense = true,
                 confidence = 80,
                 isReimbursable = false,
@@ -217,7 +257,7 @@ object VoiceCategorizer {
             )
         }
 
-        // 8. 只识别到金额，分到"其他"
+        // 10. 只识别到金额，分到"其他"
         return ParsedResult(
             amount = amountResult.value,
             amountText = amountResult.text,
@@ -236,40 +276,78 @@ object VoiceCategorizer {
      * @return Pair<是否可报销, 报销对象>
      */
     private fun detectReimbursement(text: String): Pair<Boolean, String> {
-        // 报销关键词
         val reimbursementKeywords = listOf("报销", "可报销", "能报销", "要报销", "需报销")
         val isReimbursable = reimbursementKeywords.any { text.contains(it) }
 
         if (!isReimbursable) return Pair(false, "")
 
-        // 提取报销对象
-        // 模式1: "XX分公司" / "XX公司" / "XX单位" / "XX部门" + 任意字符 + "报销"
-        val targetRegex1 = Regex("""([一-龥A-Za-z]{1,10})(分公司|公司|单位|部门|人).*?报销""")
+        // 模式1: "XX分公司/公司/单位/部门" + ... + "报销"
+        val targetRegex1 = Regex("""([一-龥A-Za-z0-9]{1,15})(分公司|公司|单位|部门|人).*?报销""")
         val match1 = targetRegex1.find(text)
         if (match1 != null) {
             val raw = match1.groupValues[1].trim()
             val suffix = match1.groupValues[2]
-            // 过滤掉分类关键词和无意义的词
             val filterWords = setOf("打车", "吃饭", "坐车", "的", "了", "要", "是", "可", "能", "交通", "餐饮")
             if (raw !in filterWords) {
                 return Pair(true, "$raw$suffix")
             }
         }
 
-        // 模式2: 没有后缀，直接在"报销"前面找2-8个中文字符
-        val targetRegex2 = Regex("""([一-龥]{2,8})报销""")
+        // 模式2: "报销" + "XX分公司/公司/单位/部门"（报销在前）
+        val targetRegex2 = Regex("""报销.*?([一-龥A-Za-z0-9]{1,15})(分公司|公司|单位|部门|人)""")
         val match2 = targetRegex2.find(text)
         if (match2 != null) {
             val raw = match2.groupValues[1].trim()
-            // 过滤掉分类关键词和无意义的词
+            val suffix = match2.groupValues[2]
+            val filterWords = setOf("打车", "吃饭", "坐车", "的", "了", "要", "是", "可", "能", "交通", "餐饮")
+            if (raw !in filterWords) {
+                return Pair(true, "$raw$suffix")
+            }
+        }
+
+        // 模式3: "XX" + "报销"（无后缀，直接在报销前找2-10个字符）
+        val targetRegex3 = Regex("""([一-龥A-Za-z]{2,10})报销""")
+        val match3 = targetRegex3.find(text)
+        if (match3 != null) {
+            val raw = match3.groupValues[1].trim()
             val filterWords = setOf("打车", "吃饭", "坐车", "的", "了", "要", "是", "可", "能", "交通", "餐饮", "差旅", "费用", "出差")
             if (raw !in filterWords) {
                 return Pair(true, raw)
             }
         }
 
-        // 模式3: 没有明确对象，返回空
+        // 模式4: "报销" + "XX"（报销在前，后面跟2-10个字符作为对象）
+        val targetRegex4 = Regex("""报销\s*([一-龥A-Za-z]{2,10})""")
+        val match4 = targetRegex4.find(text)
+        if (match4 != null) {
+            val raw = match4.groupValues[1].trim()
+            val filterWords = setOf("到账", "收入", "收到", "入账", "进账", "款", "了", "的", "是")
+            if (raw !in filterWords) {
+                return Pair(true, raw)
+            }
+        }
+
         return Pair(true, "")
+    }
+
+    /**
+     * 检测"XX公司/分公司/单位/部门"模式（自动识别为可报销）
+     * @return Pair<是否匹配, 报销对象>
+     */
+    private fun detectCompanyReimbursement(text: String): Pair<Boolean, String> {
+        // 模式1: "XX分公司/公司/单位/部门"
+        val targetRegex1 = Regex("""([一-龥A-Za-z0-9]{1,15})(分公司|公司|单位|部门)""")
+        val match1 = targetRegex1.find(text)
+        if (match1 != null) {
+            val raw = match1.groupValues[1].trim()
+            val suffix = match1.groupValues[2]
+            val filterWords = setOf("打车", "吃饭", "坐车", "的", "了", "要", "是", "可", "能", "交通", "餐饮")
+            if (raw !in filterWords) {
+                return Pair(true, "$raw$suffix")
+            }
+        }
+
+        return Pair(false, "")
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -289,10 +367,12 @@ object VoiceCategorizer {
 
         // 2. 标准数字格式：匹配如 "38", "25.5", "128.50", "38元", "25块5", "38块"
         val patterns = listOf(
-            // "128.50" 或 "128.5"
-            Regex("""(\d+\.\d{1,2})"""),
             // "25块5" / "25块5毛" / "25块5角"
             Regex("""(\d+)\s*块\s*(\d+)"""),
+            // 阿拉伯数字+万/千：如 "1万", "2千", "1.5万"（优先于小数匹配）
+            Regex("""(\d+\.?\d*)\s*[万千]"""),
+            // "128.50" 或 "128.5"
+            Regex("""(\d+\.\d{1,2})"""),
             // "38 元" / "38元" / "38块" (不带角分)
             Regex("""(\d+)\s*[元块钱￥¥]"""),
             // 纯数字 "38"（没有块/元后缀的数字）
@@ -303,6 +383,7 @@ object VoiceCategorizer {
             val match = pattern.find(text)
             if (match != null) {
                 val groups = match.groupValues
+                val matchedText = match.value
                 return when {
                     // "25块5" → groups = ["25块5", "25", "5"]
                     groups.size >= 3 && groups[1].isNotEmpty() && groups[2].isNotEmpty() -> {
@@ -312,10 +393,17 @@ object VoiceCategorizer {
                         val value = main + fracAdjusted
                         AmountResult(value, "%.2f".format(value))
                     }
-                    // 普通数字
+                    // 普通数字（可能带万/千单位）
                     groups.size >= 2 -> {
                         val value = groups[1].toDoubleOrNull() ?: continue
-                        AmountResult(value, "%.2f".format(value))
+                        // 检查是否带万/千单位
+                        val multiplier = when {
+                            matchedText.endsWith("万") -> 10000.0
+                            matchedText.endsWith("千") -> 1000.0
+                            else -> 1.0
+                        }
+                        val finalValue = value * multiplier
+                        AmountResult(finalValue, "%.2f".format(finalValue))
                     }
                     else -> continue
                 }
@@ -351,7 +439,7 @@ object VoiceCategorizer {
             return AmountResult(total, "%.2f".format(total))
         }
 
-        return AmountResult(value.toDouble(), "%.2f".format(value))
+        return AmountResult(value.toDouble(), "%.2f".format(value.toDouble()))
     }
 
     /**

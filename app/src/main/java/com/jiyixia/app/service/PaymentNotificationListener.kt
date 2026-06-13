@@ -10,10 +10,13 @@ import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import com.jiyixia.app.BuildConfig
 import androidx.core.app.NotificationCompat
 import com.jiyixia.app.JiYiXiaApp
 import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.ui.MainActivity
+import com.jiyixia.app.domain.usecase.SmartParseUseCase
+import com.jiyixia.app.util.toCents
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -77,37 +80,46 @@ class PaymentNotificationListener : NotificationListenerService() {
         val notification = sbn.notification ?: return
         val allText = extractAllText(notification)
 
-        Log.d(TAG, "收到通知: pkg=$packageName, text=$allText")
+        if (BuildConfig.DEBUG) Log.d(TAG, "收到通知: pkg=$packageName, text=$allText")
 
         if (allText.isBlank()) return
 
         // 检查是否包含支付相关关键词（避免误识别普通聊天消息）
         if (!containsPaymentKeyword(allText)) {
-            Log.d(TAG, "无支付关键词，跳过")
+            if (BuildConfig.DEBUG) Log.d(TAG, "无支付关键词，跳过")
             return
         }
 
         // 解析金额
         val amount = parseAmount(allText)
         if (amount == null || amount <= 0) {
-            Log.d(TAG, "无法解析金额，跳过")
+            if (BuildConfig.DEBUG) Log.d(TAG, "无法解析金额，跳过")
             return
         }
 
-        Log.d(TAG, "识别到支付: amount=$amount, text=$allText")
+        if (BuildConfig.DEBUG) Log.d(TAG, "识别到支付: amount=$amount, text=$allText")
 
-        // 判断收支类型
-        val type = if (isIncome(allText)) 1 else 0
-
-        // 解析商户 → 分类
-        val (categoryName, confidence) = matchCategory(allText, type)
-
-        // 保存到数据库
+        // 使用 VoiceCategorizer 统一分类逻辑
         val app = applicationContext as JiYiXiaApp
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val db = app.database
                 val categories = db.categoryDao().getAll().first()
+                val nameToId = categories.associate { it.name to it.id }
+                val defaultCategoryId = categories.firstOrNull()?.id ?: 0L
+
+                val parsed = SmartParseUseCase.parse(
+                    text = allText,
+                    categoryNameToId = nameToId,
+                    defaultCategoryId = defaultCategoryId
+                )
+
+                val categoryName = parsed?.categoryName ?: "其他"
+                val type = if (parsed?.isExpense == false) 1 else 0
+                val confidence = parsed?.confidence ?: 50
+                val isReimbursable = parsed?.isReimbursable ?: false
+                val reimbursementTarget = parsed?.reimbursementTarget ?: ""
+
                 val category = categories.find { it.name == categoryName && it.type == type }
                     ?: categories.find { it.name == categoryName }
                     ?: categories.find { it.name == "其他" && it.type == type }
@@ -115,22 +127,22 @@ class PaymentNotificationListener : NotificationListenerService() {
 
                 if (category != null) {
                     val isPending = confidence < 80
+                    val typeLabel = if (type == 1) "收入" else "支出"
                     db.recordDao().insert(
                         Record(
                             type = type,
-                            amount = amount,
+                            amount = amount.toCents(),
                             categoryId = category.id,
-                            note = allText.take(100),
+                            note = "$typeLabel·$categoryName",
                             date = System.currentTimeMillis(),
                             isPendingConfirm = isPending,
-                            confidence = confidence
+                            confidence = confidence,
+                            isReimbursable = isReimbursable,
+                            reimbursementTarget = reimbursementTarget
                         )
                     )
-                    // 显示识别通知
-                    val typeLabel = if (type == 1) "收入" else "支出"
                     showDetectNotification(amount, "$typeLabel·$categoryName", isPending)
-                    // 记录调试信息
-                    addDetection("识别: $typeLabel ¥$amount → $categoryName (置信度$confidence%)")
+                    addSanitizedDetection(typeLabel, amount, categoryName, confidence)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "保存记录失败", e)
@@ -270,6 +282,16 @@ class PaymentNotificationListener : NotificationListenerService() {
             recentDetections.add(0, "$time $msg")
             if (recentDetections.size > 20) recentDetections.removeLast()
         }
+    }
+
+    /**
+     * 添加脱敏的识别日志
+     * 只显示时间+分类+金额，不暴露原始通知全文
+     */
+    private fun addSanitizedDetection(type: String, amount: Double, categoryName: String, confidence: Int) {
+        val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+            .format(java.util.Date())
+        addDetection("$type ¥$amount → $categoryName (置信度$confidence%)")
     }
 
     // ===== 前台服务保活 =====

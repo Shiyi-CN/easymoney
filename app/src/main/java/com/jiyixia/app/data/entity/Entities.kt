@@ -33,7 +33,7 @@ data class Category(
 data class Record(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val type: Int,              // 0=支出, 1=收入
-    val amount: Double,
+    val amount: Long,           // 金额，单位：分（38.10元 → 3810L）
     val categoryId: Long,
     val note: String = "",
     val date: Long,             // Unix 时间戳(毫秒)

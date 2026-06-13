@@ -1,59 +1,59 @@
 package com.jiyixia.app.ui.screens
 
 import android.app.Application
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.IntOffset
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jiyixia.app.data.entity.Category
 import com.jiyixia.app.data.entity.Record
+import com.jiyixia.app.data.ThemePreferences
 import com.jiyixia.app.ui.theme.*
-import com.jiyixia.app.util.VoiceCategorizer
-import com.jiyixia.app.util.VoiceRecognitionManager
+import com.jiyixia.app.util.CategoryEmoji
+import com.jiyixia.app.util.toAmountString
 import com.jiyixia.app.viewmodel.HomeViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.runtime.mutableFloatStateOf
+import kotlin.math.roundToInt
 import java.text.SimpleDateFormat
 import java.util.*
-
-// ── 分类 Emoji 映射（轻量，不引入图片资源）──────────────────────────────────────
-private val categoryEmojiMap = mapOf(
-    // 支出分类
-    "餐饮" to "🍜", "交通" to "🚇", "购物" to "🛒", "居住" to "🏠",
-    "娱乐" to "🎮", "医疗" to "🏥", "教育" to "📚", "通讯" to "📱",
-    "社交" to "🤝", "美容" to "💄", "宠物" to "🐱", "办公" to "💼",
-    "维修" to "🔧", "捐赠" to "❤️", "其他" to "📋",
-    // 收入分类
-    "工资" to "💰", "奖金" to "🏆", "理财" to "📈", "兼职" to "💼",
-    "红包" to "🧧", "报销" to "🧾", "租金" to "🏠", "退款" to "↩️",
-    "中奖" to "🎰"
-)
-private fun categoryEmoji(name: String?) = categoryEmojiMap[name] ?: "💸"
 
 // ── 格式化 ─────────────────────────────────────────────────────────────────────
 private val dateSdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
@@ -74,14 +74,20 @@ private fun formatDateGroup(dateStr: String): String {
 
 // ── 设备品牌检测（用于语音引擎兼容引导）──────────────────────────────────
 
-private fun formatAmount(amount: Double, type: Int): String {
+private fun formatAmount(amount: Long, type: Int): String {
     val prefix = if (type == 0) "-" else "+"
-    return "$prefix¥${String.format("%.2f", amount)}"
+    return "$prefix${amount.toAmountString()}"
 }
 
 private fun daySum(records: List<Record>): String {
     val net = records.sumOf { if (it.type == 0) -it.amount else it.amount }
-    return if (net >= 0) "+¥${String.format("%.2f", net)}" else "-¥${String.format("%.2f", -net)}"
+    return if (net >= 0) "+${net.toAmountString()}" else "-${(-net).toAmountString()}"
+}
+
+// ── FAB 状态枚举 ─────────────────────────────────────────────────────────────
+private enum class FabState {
+    NORMAL,   // 正常状态：52dp，100% 透明度
+    FADED     // 半透明状态：52dp，40% 透明度
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -97,104 +103,296 @@ fun HomeScreen(
     )
 ) {
     val uiState by vm.uiState.collectAsState()
+    val context = LocalContext.current
 
     // 编辑记录状态
     var editingRecord by remember { mutableStateOf<Record?>(null) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // ── 顶部标题栏
-            TopAppBar(
-                title = { Text("记一下", fontWeight = FontWeight.SemiBold, fontSize = 17.sp) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            )
+    // Snackbar支持
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 88.dp)
-            ) {
-                // ── 月度概览卡
-                item {
-                    MonthOverviewCard(
-                        income = uiState.monthIncome,
-                        expense = uiState.monthExpense,
-                        reimbursable = uiState.monthReimbursable,
-                        reimbursed = uiState.monthReimbursed,
-                        reimbursableCount = uiState.reimbursableCount,
-                        onReimbursableClick = onNavigateToReimbursable
-                    )
-                }
-
-                // ── 待确认 Banner
-                if (uiState.pendingCount > 0) {
-                    item {
-                        PendingConfirmBanner(
-                            count = uiState.pendingCount,
-                            onConfirmAll = { vm.confirmAllRecords() }
-                        )
-                    }
-                }
-
-                // ── 按日期分组列表
-                if (uiState.records.isEmpty()) {
-                    item { EmptyState() }
-                } else {
-                    val grouped = uiState.records
-                        .groupBy { dateSdf.format(Date(it.date)) }
-                        .toSortedMap(compareByDescending { it })
-
-                    grouped.forEach { (dateStr, dayRecords) ->
-                        // 日期分组头
-                        item(key = "header_$dateStr") {
-                            DateGroupHeader(
-                                label = formatDateGroup(dateStr),
-                                sum = daySum(dayRecords)
-                            )
-                        }
-                        // 条目
-                        items(dayRecords, key = { it.id }) { record ->
-                            RecordItemCard(
-                                record = record,
-                                categories = uiState.categories,
-                                onConfirm = { vm.confirmRecord(record) },
-                                onDelete = { vm.deleteRecord(record) },
-                                onReimbursed = { vm.markReimbursed(record) },
-                                onEdit = { editingRecord = it }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── FAB（圆角矩形）- 导航到快速记账界面
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 18.dp, bottom = 82.dp)
-                .size(52.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.primary)
-                .clickable { onNavigateToQuickRecord() },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Default.Add, contentDescription = "记一笔", tint = Color.White, modifier = Modifier.size(26.dp))
+    // 错误信息订阅
+    val errorMessage by vm.errorMessage.collectAsState()
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            vm.clearError()
         }
     }
 
-    // 编辑记录对话框
-    editingRecord?.let { record ->
-        EditRecordDialog(
-            record = record,
-            categories = uiState.categories,
-            onDismiss = { editingRecord = null },
-            onSave = { updatedRecord ->
-                vm.updateRecord(updatedRecord)
-                editingRecord = null
+    // 撤销删除的逻辑
+    var pendingDeleteRecord by remember { mutableStateOf<Record?>(null) }
+
+    // 左滑删除模式（0=直接删除, 1=显示按钮）
+    val swipeDeleteMode by ThemePreferences.getSwipeDeleteMode(context).collectAsState(initial = 0)
+
+    // FAB 状态管理
+    var fabState by remember { mutableStateOf(FabState.NORMAL) }
+    var fabOffset by remember { mutableStateOf(Offset.Zero) }
+    var isDragging by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+
+    // 屏幕尺寸（用于边界计算）
+    var screenWidth by remember { mutableFloatStateOf(0f) }
+    var screenHeight by remember { mutableFloatStateOf(0f) }
+
+    // 记账完成后重置 FAB 状态
+    LaunchedEffect(uiState.records.size) {
+        if (fabState != FabState.NORMAL) {
+            fabState = FabState.NORMAL
+        }
+    }
+
+    // FAB 状态定时器
+    LaunchedEffect(fabState, isDragging) {
+        if (isDragging) return@LaunchedEffect
+
+        when (fabState) {
+            FabState.NORMAL -> {
+                delay(5000)  // 5秒后变半透明
+                fabState = FabState.FADED
             }
+            FabState.FADED -> {
+                // 不自动恢复，需要用户交互
+            }
+        }
+    }
+
+    // FAB 尺寸（像素）
+    val fabSizePx = with(density) { 28.dp.toPx() }
+
+    // 吸附到最近边缘
+    fun snapToEdge(currentOffset: Offset): Offset {
+        val distances = mapOf(
+            "left" to currentOffset.x,
+            "right" to screenWidth - currentOffset.x - fabSizePx,
+            "bottom" to screenHeight - currentOffset.y - fabSizePx - 80f
         )
+
+        val nearest = distances.minByOrNull { it.value }?.key ?: "right"
+
+        return when (nearest) {
+            "left" -> Offset(4f, currentOffset.y.coerceIn(4f, screenHeight - fabSizePx - 80f))
+            "right" -> Offset(
+                (screenWidth - fabSizePx - 4f).coerceAtLeast(4f),
+                currentOffset.y.coerceIn(4f, screenHeight - fabSizePx - 80f)
+            )
+            "bottom" -> Offset(
+                currentOffset.x.coerceIn(4f, screenWidth - fabSizePx - 4f),
+                screenHeight - fabSizePx - 84f
+            )
+            else -> currentOffset
+        }
+    }
+
+    // 限制在屏幕边界内
+    fun constrainToScreen(offset: Offset): Offset {
+        return Offset(
+            offset.x.coerceIn(4f, screenWidth - fabSizePx - 4f),
+            offset.y.coerceIn(4f, screenHeight - fabSizePx - 80f)
+        )
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { coordinates ->
+                screenWidth = coordinates.size.width.toFloat()
+                screenHeight = coordinates.size.height.toFloat()
+                // 屏幕尺寸确定后，初始化 FAB 位置
+                if (fabOffset == Offset.Zero) {
+                    fabOffset = Offset(
+                        screenWidth - with(density) { 28.dp.toPx() } - with(density) { 18.dp.toPx() },
+                        screenHeight - with(density) { 28.dp.toPx() } - with(density) { 82.dp.toPx() }
+                    )
+                }
+            }
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // ── 月度概览卡 - 顶格显示
+            MonthOverviewCard(
+                income = uiState.monthIncome,
+                expense = uiState.monthExpense,
+                reimbursable = uiState.monthReimbursable,
+                reimbursed = uiState.monthReimbursed,
+                reimbursableCount = uiState.reimbursableCount,
+                onReimbursableClick = onNavigateToReimbursable
+            )
+
+            // ── 待确认 Banner - 固定在顶部
+            if (uiState.pendingCount > 0) {
+                PendingConfirmBanner(
+                    count = uiState.pendingCount,
+                    onConfirmAll = { vm.confirmAllRecords() }
+                )
+            }
+
+            // ── 折叠状态（在 LazyColumn 外部，Composable 上下文中）
+            val grouped = uiState.records
+                .groupBy { dateSdf.format(Date(it.date)) }
+                .toSortedMap(compareByDescending { it })
+
+            // 默认展开今天
+            val todayStr = dateSdf.format(Date())
+            var expandedDates by remember { mutableStateOf(setOf(todayStr)) }
+
+            // ── 记录列表 - 可滚动
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentPadding = PaddingValues(bottom = 16.dp)
+            ) {
+                if (uiState.records.isEmpty()) {
+                    item { EmptyState() }
+                } else {
+                    grouped.forEach { (dateStr, dayRecords) ->
+                        val isExpanded = expandedDates.contains(dateStr)
+
+                        // 日期分组头（可点击展开/折叠）
+                        item(key = "header_$dateStr") {
+                            DateGroupHeader(
+                                label = formatDateGroup(dateStr),
+                                sum = daySum(dayRecords),
+                                isExpanded = isExpanded,
+                                onClick = {
+                                    expandedDates = if (isExpanded) {
+                                        expandedDates - dateStr
+                                    } else {
+                                        expandedDates + dateStr
+                                    }
+                                }
+                            )
+                        }
+
+                        // 条目（展开时显示）
+                        if (isExpanded) {
+                            items(dayRecords, key = { it.id }) { record ->
+                                SwipeToDismissRecordItem(
+                                    record = record,
+                                    categories = uiState.categories,
+                                    onConfirm = { vm.confirmRecord(record) },
+                                    onDelete = {
+                                        pendingDeleteRecord = record
+                                        vm.deleteRecord(record)
+                                        scope.launch {
+                                            val result = snackbarHostState.showSnackbar(
+                                                message = "已删除记录",
+                                                actionLabel = "撤销",
+                                                duration = SnackbarDuration.Short
+                                            )
+                                            if (result == SnackbarResult.ActionPerformed) {
+                                                pendingDeleteRecord?.let { vm.restoreRecord(it) }
+                                            }
+                                            pendingDeleteRecord = null
+                                        }
+                                    },
+                                    onReimbursable = { vm.markReimbursed(record) },
+                                    onClick = { editingRecord = record },
+                                    swipeDeleteMode = swipeDeleteMode
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Snackbar（浮动在 FAB 上方）
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 88.dp)
+        ) { data ->
+            Snackbar(
+                snackbarData = data,
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .padding(horizontal = 32.dp),
+                containerColor = MaterialTheme.colorScheme.inverseSurface,
+                contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                actionColor = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(12.dp)
+            )
+        }
+
+        // ── 可拖动 FAB ──────────────────────────────────────────────────────────────
+        val fabAlpha by animateFloatAsState(
+            targetValue = if (fabState == FabState.NORMAL) 1f else 0.4f,
+            animationSpec = tween(300),
+            label = "fab_alpha"
+        )
+
+        val fabSize = 28.dp  // 缩小一半
+        val fabIconSize = 14.dp
+
+        // FAB 位置（如果没有拖动过，初始化到右下角）
+        val defaultOffset = Offset(
+            screenWidth - with(density) { fabSize.toPx() } - with(density) { 18.dp.toPx() },
+            screenHeight - with(density) { fabSize.toPx() } - with(density) { 82.dp.toPx() }
+        )
+        val currentOffset = if (fabOffset == Offset.Zero) defaultOffset else fabOffset
+
+        Box(
+            modifier = Modifier
+                .offset {
+                    IntOffset(currentOffset.x.roundToInt(), currentOffset.y.roundToInt())
+                }
+                .size(fabSize)
+                .alpha(fabAlpha)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.primary)
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            isDragging = true
+                            fabState = FabState.NORMAL
+                        },
+                        onDragEnd = {
+                            isDragging = false
+                            fabOffset = snapToEdge(fabOffset)
+                        },
+                        onDragCancel = {
+                            isDragging = false
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            fabOffset = Offset(
+                                fabOffset.x + dragAmount.x,
+                                fabOffset.y + dragAmount.y
+                            )
+                            fabOffset = constrainToScreen(fabOffset)
+                        }
+                    )
+                }
+                .clickable {
+                    fabState = FabState.NORMAL
+                    onNavigateToQuickRecord()
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Default.Add,
+                contentDescription = "记一笔",
+                tint = Color.White,
+                modifier = Modifier.size(fabIconSize)
+            )
+        }
+
+        // 编辑记录对话框
+        editingRecord?.let { record ->
+            EditRecordDialog(
+                record = record,
+                categories = uiState.categories,
+                onDismiss = { editingRecord = null },
+                onSave = { updatedRecord ->
+                    vm.updateRecord(updatedRecord)
+                    editingRecord = null
+                }
+            )
+        }
     }
 }
 
@@ -203,10 +401,10 @@ fun HomeScreen(
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun MonthOverviewCard(
-    income: Double,
-    expense: Double,
-    reimbursable: Double = 0.0,
-    reimbursed: Double = 0.0,
+    income: Long,
+    expense: Long,
+    reimbursable: Long = 0L,
+    reimbursed: Long = 0L,
     reimbursableCount: Int = 0,
     onReimbursableClick: () -> Unit = {}
 ) {
@@ -217,60 +415,68 @@ private fun MonthOverviewCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .padding(horizontal = 14.dp, vertical = 4.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(
                 Brush.linearGradient(
                     listOf(Color(0xFF1B6B4D), Color(0xFF2D8F68))
                 )
             )
-            .padding(horizontal = 20.dp, vertical = 18.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         // 装饰圆
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .offset(x = 20.dp, y = (-30).dp)
-                .size(120.dp)
+                .size(100.dp)
                 .clip(RoundedCornerShape(50))
                 .background(Color.White.copy(alpha = 0.07f))
         )
         Column {
-            Text(label, color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
-            Spacer(Modifier.height(6.dp))
+            // 标题行
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("记一下", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(label, color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+            }
+            Spacer(Modifier.height(4.dp))
             Text(
-                "¥ ${String.format("%.2f", balance)}",
+                balance.toAmountString(),
                 color = Color.White,
-                fontSize = 28.sp,
+                fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.5f).sp
             )
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(8.dp))
             Row {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("支出", color = Color.White.copy(alpha = 0.75f), fontSize = 11.sp)
                     Spacer(Modifier.height(2.dp))
-                    Text("¥${String.format("%.2f", expense)}", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(expense.toAmountString(), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 }
-                Box(modifier = Modifier.width(0.5.dp).height(36.dp).background(Color.White.copy(alpha = 0.25f)))
+                Box(modifier = Modifier.width(0.5.dp).height(32.dp).background(Color.White.copy(alpha = 0.25f)))
                 Spacer(Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text("收入", color = Color.White.copy(alpha = 0.75f), fontSize = 11.sp)
                     Spacer(Modifier.height(2.dp))
-                    Text("¥${String.format("%.2f", income)}", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(income.toAmountString(), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
 
             // ── 待报销行（有报销金额时显示）
             if (reimbursable > 0 || reimbursed > 0) {
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color.White.copy(alpha = 0.12f))
                         .clickable(onClick = onReimbursableClick)
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Column {
                         // 待报销
@@ -284,7 +490,7 @@ private fun MonthOverviewCard(
                             )
                             Spacer(Modifier.weight(1f))
                             Text(
-                                "¥${String.format("%.2f", reimbursable)}",
+                                reimbursable.toAmountString(),
                                 color = Color(0xFFFFD54F),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
@@ -303,7 +509,7 @@ private fun MonthOverviewCard(
                                 )
                                 Spacer(Modifier.weight(1f))
                                 Text(
-                                    "¥${String.format("%.2f", reimbursed)}",
+                                    reimbursed.toAmountString(),
                                     color = Color.White.copy(alpha = 0.7f),
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Medium
@@ -355,19 +561,34 @@ private fun PendingConfirmBanner(count: Int, onConfirmAll: () -> Unit) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  日期分组头
+//  日期分组头（可点击展开/折叠）
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
-private fun DateGroupHeader(label: String, sum: String) {
+private fun DateGroupHeader(
+    label: String,
+    sum: String,
+    isExpanded: Boolean = true,
+    onClick: () -> Unit = {}
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 6.dp)
             .padding(top = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // 展开/折叠箭头
+            Text(
+                if (isExpanded) "▼" else "▶",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 6.dp)
+            )
+            Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
         Text(sum, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
     }
 }
@@ -380,9 +601,8 @@ private fun RecordItemCard(
     record: Record,
     categories: List<Category>,
     onConfirm: () -> Unit,
-    onDelete: () -> Unit,
     onReimbursed: () -> Unit = {},
-    onEdit: (Record) -> Unit = {}
+    onClick: () -> Unit = {}
 ) {
     val category = categories.find { it.id == record.categoryId }
     val isPending = record.isPendingConfirm
@@ -397,6 +617,7 @@ private fun RecordItemCard(
             .padding(horizontal = 14.dp, vertical = 3.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(cardBg)
+            .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -408,7 +629,7 @@ private fun RecordItemCard(
                 .background(iconBg),
             contentAlignment = Alignment.Center
         ) {
-            Text(categoryEmoji(category?.name), fontSize = 18.sp)
+            Text(CategoryEmoji.get(category?.name), fontSize = 18.sp)
         }
 
         Spacer(Modifier.width(12.dp))
@@ -506,39 +727,120 @@ private fun RecordItemCard(
                 )
             }
         }
+    }
+}
 
-        // 删除按钮（长按显示）
-        Spacer(Modifier.width(4.dp))
+// ══════════════════════════════════════════════════════════════════════════════
+//  左滑删除记录条目（卡片右侧收缩，露出红色删除图标）
+// ══════════════════════════════════════════════════════════════════════════════
+@Composable
+private fun SwipeToDismissRecordItem(
+    record: Record,
+    categories: List<Category>,
+    onConfirm: () -> Unit,
+    onDelete: () -> Unit,
+    onReimbursable: () -> Unit = {},
+    onClick: () -> Unit = {},
+    swipeDeleteMode: Int = 0 // 0=直接删除, 1=显示按钮
+) {
+    val density = LocalDensity.current
+    val deleteWidthPx = with(density) { 80.dp.toPx() }  // 最大收缩宽度
+    val threshold = with(density) { 50.dp.toPx() }      // 触发阈值
+    val minDragPx = with(density) { 10.dp.toPx() }      // 最小拖拽距离，避免误触
+
+    val offsetX = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val currentSwipeMode by rememberUpdatedState(swipeDeleteMode)
+    val currentOnDelete by rememberUpdatedState(onDelete)
+
+    // 收缩量（0 ~ deleteWidthPx）
+    val shrinkPx = (-offsetX.value).coerceIn(0f, deleteWidthPx)
+    val isExpanded = offsetX.value <= -threshold
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 左侧：记录卡片（宽度随滑动收缩）
         Box(
             modifier = Modifier
-                .size(28.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFFFFEBEE))
-                .clickable(onClick = onDelete),
-            contentAlignment = Alignment.Center
+                .weight(1f)
+                .pointerInput(currentSwipeMode) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            scope.launch {
+                                if (currentSwipeMode == 0) {
+                                    if (offsetX.value < -threshold) {
+                                        currentOnDelete()
+                                        offsetX.snapTo(0f)
+                                    } else {
+                                        offsetX.animateTo(0f, tween(200))
+                                    }
+                                } else {
+                                    if (offsetX.value < -threshold) {
+                                        offsetX.animateTo(-deleteWidthPx, tween(200))
+                                    } else {
+                                        offsetX.animateTo(0f, tween(200))
+                                    }
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            scope.launch { offsetX.animateTo(0f, tween(200)) }
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            scope.launch {
+                                val newOffset = (offsetX.value + dragAmount).coerceIn(-deleteWidthPx, 0f)
+                                offsetX.snapTo(newOffset)
+                            }
+                        }
+                    )
+                }
         ) {
-            Icon(
-                Icons.Default.Delete, contentDescription = "删除",
-                tint = Color(0xFFE53935),
-                modifier = Modifier.size(14.dp)
+            RecordItemCard(
+                record = record,
+                categories = categories,
+                onConfirm = onConfirm,
+                onReimbursed = onReimbursable,
+                onClick = {
+                    if (isExpanded) {
+                        scope.launch { offsetX.animateTo(0f, tween(200)) }
+                    } else {
+                        onClick()
+                    }
+                }
             )
         }
 
-        // 编辑按钮
-        Spacer(Modifier.width(4.dp))
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFFE3F2FD))
-                .clickable(onClick = { onEdit(record) }),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                Icons.Default.Edit, contentDescription = "编辑",
-                tint = Color(0xFF1565C0),
-                modifier = Modifier.size(14.dp)
-            )
+        // 右侧：红色删除图标（与记录内容垂直居中对齐）
+        if (shrinkPx > 0f) {
+            Box(
+                modifier = Modifier
+                    .width(with(density) { shrinkPx.toDp() }),
+                contentAlignment = Alignment.Center
+            ) {
+                if (currentSwipeMode == 1) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "确认删除",
+                        tint = Color(0xFFE53935),
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clickable {
+                                scope.launch { offsetX.animateTo(0f, tween(200)) }
+                                currentOnDelete()
+                            }
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "删除",
+                        tint = Color(0xFFE53935),
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
         }
     }
 }
@@ -557,416 +859,6 @@ private fun EmptyState() {
         Text("🪴", fontSize = 48.sp)
         Spacer(Modifier.height(12.dp))
         Text("还没有记录，记一笔吧", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
-    }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  记账 BottomSheet（含语音输入）
-// ══════════════════════════════════════════════════════════════════════════════
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AddRecordSheet(
-    categories: List<Category>,
-    allCategories: List<Category>,
-    selectedType: Int,
-    onTypeChange: (Int) -> Unit,
-    onConfirm: (amount: Double, categoryId: Long, note: String, type: Int, isReimbursable: Boolean, reimbursementTarget: String) -> Unit,
-    onDismiss: () -> Unit
-) {
-
-    var amountText by remember { mutableStateOf("") }
-    var selectedCategoryId by remember { mutableStateOf(categories.firstOrNull()?.id ?: 0L) }
-    var noteText by remember { mutableStateOf("") }
-    var currentType by remember { mutableStateOf(selectedType) }
-    var isReimbursable by remember { mutableStateOf(false) }
-    var reimbursementTarget by remember { mutableStateOf("") }
-
-    // ── 语音识别状态（系统 Intent）──
-    var voiceError by remember { mutableStateOf<String?>(null) }
-
-    // 处理语音识别结果
-    fun processVoiceText(text: String) {
-        val nameToId = allCategories.associate { it.name to it.id }
-        val parsed = VoiceCategorizer.parse(
-            text = text,
-            categoryNameToId = nameToId,
-            defaultCategoryId = categories.firstOrNull()?.id ?: 0L
-        )
-        if (parsed != null) {
-            amountText = parsed.amountText
-            if (parsed.categoryId > 0) selectedCategoryId = parsed.categoryId
-            if (parsed.note.isNotBlank()) noteText = parsed.note
-            if (parsed.isExpense && currentType != 0) { currentType = 0; onTypeChange(0) }
-            else if (!parsed.isExpense && currentType != 1) { currentType = 1; onTypeChange(1) }
-            // 报销标记（使用 VoiceCategorizer 的识别结果）
-            isReimbursable = parsed.isReimbursable
-            reimbursementTarget = parsed.reimbursementTarget
-            voiceError = null
-        } else {
-            voiceError = "未能识别金额，请手动输入"
-        }
-    }
-
-    // 系统语音识别 Launcher
-    val voiceLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val text = VoiceRecognitionManager.extractBestText(result.data)
-            if (!text.isNullOrBlank()) {
-                processVoiceText(text)
-            } else {
-                voiceError = "未能识别语音，请重试"
-            }
-        }
-    }
-
-    // 启动语音识别
-    fun startVoiceRecognition() {
-        voiceError = null
-        try {
-            voiceLauncher.launch(VoiceRecognitionManager.createRecognizerIntent())
-        } catch (e: Exception) {
-            voiceError = "设备不支持语音识别"
-        }
-    }
-
-    // ── 按当前类型筛选要显示的分类 ──
-    val displayCategories = remember(currentType) {
-        if (currentType == 0) {
-            allCategories.filter { it.type == 0 }
-        } else {
-            allCategories.filter { it.type == 1 }
-        }
-    }
-
-    // 当类型切换时，自动选中第一个分类
-    LaunchedEffect(currentType) {
-        displayCategories.firstOrNull()?.let { selectedCategoryId = it.id }
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = {
-            onDismiss()
-        },
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        containerColor = MaterialTheme.colorScheme.surface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 32.dp)
-                .verticalScroll(rememberScrollState())
-        ) {
-            Text(
-                "记一笔",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
-            Spacer(Modifier.height(16.dp))
-
-            // ── 收支切换
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Surface2)
-                    .padding(3.dp)
-            ) {
-                listOf(0 to "支出", 1 to "收入").forEach { (type, label) ->
-                    val isSelected = currentType == type
-                    val bg = when {
-                        !isSelected -> Color.Transparent
-                        type == 0 -> ExpenseRed
-                        else -> IncomeGreen
-                    }
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable {
-                                currentType = type
-                                onTypeChange(type)
-                                if (type == 1) isReimbursable = false
-                            }
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(bg)
-                            .padding(vertical = 8.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            label,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(18.dp))
-
-            // ── 金额输入区
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 10.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("¥ ", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 20.sp, fontWeight = FontWeight.Medium)
-                    Text(
-                        if (amountText.isEmpty()) "0" else amountText,
-                        fontSize = 40.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (currentType == 0) ExpenseRed else IncomeGreen,
-                        letterSpacing = (-1f).sp
-                    )
-                }
-            }
-
-            // ── 语音输入入口 ──
-            VoiceInputRow(
-                voiceError = voiceError,
-                onClick = { startVoiceRecognition() }
-            )
-
-            Spacer(Modifier.height(4.dp))
-            Divider(color = BorderColor, thickness = 0.5.dp)
-            Spacer(Modifier.height(16.dp))
-
-            // ── 隐藏的真实输入框（驱动数值）
-            OutlinedTextField(
-                value = amountText,
-                onValueChange = { v ->
-                    if (v.length <= 10 && v.matches(Regex("^\\d*\\.?\\d{0,2}$")))
-                        amountText = v
-                },
-                label = { Text("金额") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = if (currentType == 0) ExpenseRed else IncomeGreen
-                )
-            )
-            Spacer(Modifier.height(12.dp))
-
-            // ── 分类网格
-            Text("选择分类", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(10.dp))
-            val cols = 4
-            val rows = (displayCategories.size + cols - 1) / cols
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                repeat(rows) { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        repeat(cols) { col ->
-                            val idx = row * cols + col
-                            if (idx < displayCategories.size) {
-                                val cat = displayCategories[idx]
-                                val isSelected = selectedCategoryId == cat.id
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .heightIn(min = 52.dp)
-                                        .clickable { selectedCategoryId = cat.id }
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(
-                                            if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                                            else Surface2
-                                        )
-                                        .padding(vertical = 8.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(categoryEmoji(cat.name), fontSize = 20.sp)
-                                        Text(
-                                            cat.name,
-                                            fontSize = 11.sp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary
-                                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
-                                        )
-                                    }
-                                }
-                            } else {
-                                Spacer(modifier = Modifier.weight(1f))
-                            }
-                        }
-                    }
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-
-            // ── 报销开关 + 报销对象（仅支出时显示）
-            if (currentType == 0) {
-                ReimbursableToggle(
-                    isReimbursable = isReimbursable,
-                    onToggle = { isReimbursable = it }
-                )
-                if (isReimbursable) {
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = reimbursementTarget,
-                        onValueChange = { reimbursementTarget = it },
-                        placeholder = { Text("报销对象，如「XX公司」「张三」", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF1565C0)
-                        )
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-
-            // ── 备注
-            OutlinedTextField(
-                value = noteText,
-                onValueChange = { noteText = it },
-                placeholder = { Text("添加备注（选填）", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                shape = RoundedCornerShape(10.dp)
-            )
-            Spacer(Modifier.height(16.dp))
-
-            // ── 确认按钮
-            Button(
-                onClick = {
-                    val amount = amountText.toDoubleOrNull() ?: return@Button
-                    if (amount > 0) {
-                        // 清理备注，移除金额、分类、报销等关键词
-                        val cleanedNote = VoiceCategorizer.cleanNote(noteText)
-                        onConfirm(amount, selectedCategoryId, cleanedNote, currentType, isReimbursable, reimbursementTarget)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                shape = RoundedCornerShape(14.dp),
-                enabled = (amountText.toDoubleOrNull() ?: 0.0) > 0,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (currentType == 0) ExpenseRed else IncomeGreen
-                )
-            ) {
-                Text("记 一 下", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
-    }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  语音输入行
-// ══════════════════════════════════════════════════════════════════════════════
-@Composable
-private fun VoiceInputRow(
-    voiceError: String?,
-    onClick: () -> Unit
-) {
-    val bgColor = if (voiceError != null) WarningOrangeBg else Surface2
-    val iconEmoji = if (voiceError != null) "⚠️" else "🎤"
-    val titleText = if (voiceError != null) "识别失败" else "语音记账"
-    val labelText = voiceError ?: "说\"午餐 38\"自动记账"
-    val labelColor = if (voiceError != null) WarningOrange else MaterialTheme.colorScheme.onSurfaceVariant
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(bgColor)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(
-                    if (voiceError != null) WarningOrange.copy(alpha = 0.15f)
-                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(iconEmoji, fontSize = 16.sp)
-        }
-
-        Spacer(Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                titleText,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = labelColor
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                labelText,
-                fontSize = 11.sp,
-                color = labelColor.copy(alpha = 0.7f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  报销开关
-// ══════════════════════════════════════════════════════════════════════════════
-@Composable
-private fun ReimbursableToggle(
-    isReimbursable: Boolean,
-    onToggle: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(Surface2)
-            .clickable { onToggle(!isReimbursable) }
-            .padding(horizontal = 14.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("🧾", fontSize = 14.sp)
-            Spacer(Modifier.width(8.dp))
-            Column {
-                Text(
-                    "可报销",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    "标记后可统计待报销金额",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                )
-            }
-        }
-        // 自定义开关
-        Box(
-            modifier = Modifier
-                .width(48.dp)
-                .height(26.dp)
-                .clip(RoundedCornerShape(13.dp))
-                .background(
-                    if (isReimbursable) Color(0xFF1565C0) else Surface2.copy(alpha = 0.5f)
-                )
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(20.dp)
-                    .offset(
-                        x = if (isReimbursable) 24.dp else 4.dp,
-                        y = 3.dp
-                    )
-                    .clip(CircleShape)
-                    .background(if (isReimbursable) Color.White else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-            )
-        }
     }
 }
 
