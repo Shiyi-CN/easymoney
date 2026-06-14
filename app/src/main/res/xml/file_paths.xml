@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 崩溃日志文件 -->
+    <files-path
+        name="crash_logs"
+        path="crash/" />
+</paths>

@@ -9,6 +9,7 @@ import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.util.BackupUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 
@@ -25,6 +26,13 @@ class RecordRepository(
     fun getPendingConfirmCount(): Flow<Int> = recordDao.getPendingConfirmCount().flowOn(Dispatchers.IO)
     fun getSumByType(type: Int, start: Long, end: Long): Flow<Long?> =
         recordDao.getSumByTypeAndDateRange(type, start, end).flowOn(Dispatchers.IO)
+
+    /**
+     * 获取指定类型的收支总和（一次性查询，非 Flow）
+     */
+    suspend fun getSumByTypeOnce(type: Int, start: Long, end: Long): Long = withContext(Dispatchers.IO) {
+        recordDao.getSumByTypeAndDateRange(type, start, end).first() ?: 0L
+    }
 
     fun getExpenseGroupByCategory(start: Long, end: Long): Flow<List<CategorySum>> =
         recordDao.getExpenseGroupByCategory(start, end).flowOn(Dispatchers.IO)
@@ -109,5 +117,49 @@ class RecordRepository(
         recordDao.getReimbursableCountByDateRange(start, end).flowOn(Dispatchers.IO)
     suspend fun setReimbursed(id: Long, reimbursed: Boolean) = withContext(Dispatchers.IO) {
         recordDao.setReimbursed(id, reimbursed)
+    }
+
+    // ── 搜索/筛选 ──
+
+    suspend fun searchRecords(
+        minAmount: Long? = null,
+        maxAmount: Long? = null,
+        categoryId: Long? = null,
+        keyword: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null
+    ): List<Record> = withContext(Dispatchers.IO) {
+        recordDao.searchRecords(minAmount, maxAmount, categoryId, keyword, startDate, endDate)
+    }
+
+    // ── 连续记账天数 ──
+
+    /**
+     * 计算连续记账天数
+     * 从今天开始往前数，连续有记录的天数
+     */
+    suspend fun getStreakDays(): Int = withContext(Dispatchers.IO) {
+        val dates = recordDao.getAllRecordDates()
+        if (dates.isEmpty()) return@withContext 0
+
+        // 将时间戳转换为日期字符串（只保留年月日）
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+        val dateSet = dates.map { sdf.format(java.util.Date(it)) }.toSet()
+
+        val today = java.util.Calendar.getInstance()
+        var streak = 0
+
+        // 从今天开始往前检查
+        while (true) {
+            val dateStr = sdf.format(today.time)
+            if (dateStr in dateSet) {
+                streak++
+                today.add(java.util.Calendar.DAY_OF_MONTH, -1)
+            } else {
+                break
+            }
+        }
+
+        streak
     }
 }

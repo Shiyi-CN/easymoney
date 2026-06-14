@@ -46,11 +46,13 @@ private enum class StatsTab(val label: String) { Expense("支出分析"), Income
 @Composable
 fun StatsScreen(
     onNavigateToReimbursableRecords: () -> Unit = {},
+    onNavigateToYearStats: () -> Unit = {},
     vm: StatsViewModel = viewModel(
         factory = StatsViewModelFactory(LocalContext.current.applicationContext as Application)
     )
 ) {
     val uiState by vm.uiState.collectAsState()
+    val trendData by vm.trendData.collectAsState()
     var selectedTab by remember { mutableStateOf(StatsTab.Expense) }
 
     // 月份标签
@@ -81,6 +83,14 @@ fun StatsScreen(
                     )
                     MonthArrowButton(">") {
                         if (uiState.monthOffset < 0) vm.nextMonth()
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    // 年度总览按钮
+                    TextButton(
+                        onClick = onNavigateToYearStats,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Text("📊 年度", fontSize = 12.sp)
                     }
                 }
 
@@ -167,7 +177,7 @@ fun StatsScreen(
                     title = "收入分类占比",
                     rankTitle = "收入排行"
                 )
-                StatsTab.Trend -> TrendPlaceholder()
+                StatsTab.Trend -> TrendChart(trendData)
             }
 
             Spacer(Modifier.height(24.dp))
@@ -308,8 +318,7 @@ private fun ReimbursableStatsCard(
         // 进度条：已报销 vs 待报销 vs 剩余
         if (pending + reimbursed > 0) {
             Spacer(Modifier.height(10.dp))
-            val reimPct = if (totalExpense > 0) ((pending + reimbursed) / totalExpense).toFloat().coerceIn(0f, 1f) else 0f
-            val pendingPct = if (totalExpense > 0 && reimPct > 0) (pending / (pending + reimbursed)).toFloat().coerceIn(0f, 1f) else 0f
+            val reimPct = if (totalExpense > 0) ((pending + reimbursed).toFloat() / totalExpense).coerceIn(0f, 1f) else 0f
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -443,17 +452,115 @@ private fun CategoryTab(
     }
 }
 
-// ── 月度趋势占位 ────────────────────────────────────────────────────────────────
+// ── 月度趋势图 ────────────────────────────────────────────────────────────────
 @Composable
-private fun TrendPlaceholder() {
-    Box(
-        modifier = Modifier.fillMaxWidth().height(220.dp),
-        contentAlignment = Alignment.Center
+private fun TrendChart(data: List<StatsViewModel.MonthTrendData>) {
+    if (data.isEmpty()) {
+        Box(
+            modifier = Modifier.fillMaxWidth().height(220.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("加载中...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        return
+    }
+
+    val maxValue = data.maxOf { maxOf(it.expense, it.income) }.toFloat().coerceAtLeast(1f)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("📊", fontSize = 48.sp)
-            Spacer(Modifier.height(8.dp))
-            Text("月度趋势图即将推出", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+        // 标题
+        Text(
+            "近 6 个月收支趋势",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+
+        // 图例
+        Row(modifier = Modifier.padding(bottom = 8.dp)) {
+            Box(modifier = Modifier.size(12.dp).background(ExpenseRed, RoundedCornerShape(2.dp)))
+            Spacer(Modifier.width(4.dp))
+            Text("支出", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(16.dp))
+            Box(modifier = Modifier.size(12.dp).background(IncomeGreen, RoundedCornerShape(2.dp)))
+            Spacer(Modifier.width(4.dp))
+            Text("收入", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        // 柱状图
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(160.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.Bottom
+        ) {
+            data.forEach { month ->
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    // 柱子
+                    Row(
+                        verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.height(130.dp)
+                    ) {
+                        // 支出柱
+                        Box(
+                            modifier = Modifier
+                                .width(16.dp)
+                                .height((month.expense / maxValue * 120).dp)
+                                .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                                .background(ExpenseRed)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        // 收入柱
+                        Box(
+                            modifier = Modifier
+                                .width(16.dp)
+                                .height((month.income / maxValue * 120).dp)
+                                .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                                .background(IncomeGreen)
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    // 月份标签
+                    Text(
+                        month.month,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // 数值标注
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            data.forEach { month ->
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        "¥${month.expense.toAmountString()}",
+                        fontSize = 9.sp,
+                        color = ExpenseRed
+                    )
+                    Text(
+                        "¥${month.income.toAmountString()}",
+                        fontSize = 9.sp,
+                        color = IncomeGreen
+                    )
+                }
+            }
         }
     }
 }

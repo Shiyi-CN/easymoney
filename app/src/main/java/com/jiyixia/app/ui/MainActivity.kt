@@ -27,8 +27,10 @@ import com.jiyixia.app.ui.screens.HomeScreen
 import com.jiyixia.app.ui.screens.QuickRecordScreen
 import com.jiyixia.app.ui.screens.ReimbursableRecordsScreen
 import com.jiyixia.app.ui.screens.CategoryManagementScreen
+import com.jiyixia.app.ui.screens.CrashLogScreen
 import com.jiyixia.app.ui.screens.SettingsScreen
 import com.jiyixia.app.ui.screens.StatsScreen
+import com.jiyixia.app.ui.screens.YearStatsScreen
 import com.jiyixia.app.ui.theme.JiYiXiaTheme
 
 class MainActivity : ComponentActivity() {
@@ -116,6 +118,9 @@ fun MainApp() {
                 StatsScreen(
                     onNavigateToReimbursableRecords = {
                         navController.navigate(Screen.ReimbursableRecords.route)
+                    },
+                    onNavigateToYearStats = {
+                        navController.navigate(Screen.YearStats.route)
                     }
                 )
             }
@@ -123,6 +128,9 @@ fun MainApp() {
                 SettingsScreen(
                     onNavigateToCategoryManagement = {
                         navController.navigate(Screen.CategoryManagement.route)
+                    },
+                    onNavigateToCrashLog = {
+                        navController.navigate(Screen.CrashLog.route)
                     }
                 )
             }
@@ -146,6 +154,12 @@ fun MainApp() {
                         navController.popBackStack()
                     }
                 )
+            }
+            composable(Screen.CrashLog.route) {
+                CrashLogScreen()
+            }
+            composable(Screen.YearStats.route) {
+                YearStatsScreen()
             }
         }
     }

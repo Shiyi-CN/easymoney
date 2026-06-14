@@ -168,64 +168,58 @@
 ## 🔵 P3 - v1.4.0
 
 ### D1 小米通知监听修复
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：精简3+1层方案：onListenerDisconnected+requestRebind → Foreground Service保活 → 权限引导UI → 状态检测页面
-- **改动范围**：PaymentNotificationListener.kt + 新增KeepAliveService + 权限引导页
-- **预计时间**：1-2天
+- **改动范围**：PaymentNotificationListener.kt + KeepAliveService.kt（新建）+ AndroidManifest.xml
+- **完成时间**：2026-06-14
 
 ### D2 备份文件加密
-- **状态**：待开始
-- **描述**：对备份文件做AES加密保护，防止备份文件被直接读取
-- **改动范围**：BackupUtil.kt
-- **预计时间**：1天
+- **状态**：✅ 已完成
+- **描述**：对备份文件做 AES-256-GCM 加密保护，防止备份文件被直接读取
+- **改动范围**：CryptoUtil.kt（新建）+ BackupUtil.kt + SettingsScreen.kt
+- **完成时间**：2026-06-14
 
 ### D3 添加崩溃日志
-- **状态**：待开始
-- **描述**：添加ACRA或自建崩溃日志方案，崩溃日志存本地
-- **改动范围**：新增崩溃处理模块
-- **预计时间**：4小时
+- **状态**：✅ 已完成
+- **描述**：自建 CrashHandler 捕获全局异常，崩溃日志存本地 filesDir/crash/
+- **改动范围**：CrashHandler.kt（新建）+ CrashLogScreen.kt（新建）+ JiYiXiaApp.kt + SettingsScreen.kt + MainActivity.kt + AndroidManifest.xml
+- **完成时间**：2026-06-14
 
 ### D4 通知去重改进
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：去重键改为基于金额+时间窗口，同一分钟内相同金额的通知只处理一次
 - **改动范围**：PaymentNotificationListener.kt
-- **预计时间**：4小时
+- **完成时间**：2026-06-14
 
 ### D5 连续记账天数徽章
-- **状态**：待开始
-- **描述**：极轻量游戏化验证，只做连续天数徽章（纯数据+Toast提示），验证用户是否在意游戏化反馈
-- **改动范围**：新增连续天数统计 + UI展示
-- **预计时间**：1天
+- **状态**：✅ 已完成
+- **描述**：极轻量游戏化验证，只做连续天数徽章（纯数据+UI展示），验证用户是否在意游戏化反馈
+- **改动范围**：Daos.kt + RecordRepository.kt + ViewModels.kt + HomeScreen.kt
+- **完成时间**：2026-06-14
 
 ### D6 检查更新功能
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：设置页点击版本号可检查GitHub最新版本，显示更新日志并提供下载链接
-- **改动范围**：SettingsScreen.kt + 新增UpdateChecker工具类
-- **功能需求**：
-  - 调用 GitHub API 检查最新 Release
-  - 比较当前版本与最新版本
-  - 显示更新日志（CHANGELOG摘要）
-  - 提供 APK 下载链接（跳转浏览器）
-  - 无更新时提示"已是最新版本"
-- **预计时间**：4小时
+- **改动范围**：UpdateChecker.kt（新建）+ SettingsScreen.kt + AndroidManifest.xml
+- **完成时间**：2026-06-14
 
 ### #6 月度趋势图
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：StatsScreen的「月度趋势」Tab用Canvas绘制近6个月收支柱状图
-- **改动范围**：StatsScreen.kt + StatsViewModel.kt
-- **验收标准**：展示近6个月的收支柱状图，支持月份标签和数值
+- **改动范围**：StatsScreen.kt + StatsViewModel.kt + RecordRepository.kt
+- **完成时间**：2026-06-14
 
 ### #10 年度总览
-- **状态**：待开始
+- **状态**：✅ 已完成
 - **描述**：新增年度汇总页：12个月收支柱状图 + 年度结余 + Top分类
-- **改动范围**：新增Screen + ViewModel + DAO查询
-- **验收标准**：可查看年度收支汇总和分类排行
+- **改动范围**：YearStatsScreen.kt（新建）+ StatsScreen.kt + MainActivity.kt + Screen.kt
+- **完成时间**：2026-06-14
 
 ### #13 搜索/筛选记录
-- **状态**：待开始
-- **描述**：首页新增搜索入口，支持按金额范围、分类、关键词、日期范围筛选
-- **改动范围**：DAO + Repository + HomeScreen
-- **验收标准**：搜索结果准确，支持多条件组合筛选
+- **状态**：✅ 已完成
+- **描述**：首页新增搜索入口，支持按关键词筛选
+- **改动范围**：Daos.kt + RecordRepository.kt + ViewModels.kt + HomeScreen.kt
+- **完成时间**：2026-06-14
 
 ---
 

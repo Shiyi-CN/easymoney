@@ -8,11 +8,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+import com.jiyixia.app.util.CrashHandler
+
 class JiYiXiaApp : Application() {
     val database: AppDatabase by lazy { AppDatabase.getInstance(this) }
 
     override fun onCreate() {
         super.onCreate()
+        // 初始化崩溃日志捕获
+        CrashHandler.getInstance().init(this)
         initPresetCategories()
     }
 

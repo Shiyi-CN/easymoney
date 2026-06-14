@@ -13,6 +13,8 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     data object QuickRecord : Screen("quick_record", "快速记账", Icons.Default.Home)
     data object ReimbursableRecords : Screen("reimbursable_records", "待报销记录", Icons.Default.Home)
     data object CategoryManagement : Screen("category_management", "分类管理", Icons.Default.Home)
+    data object CrashLog : Screen("crash_log", "崩溃日志", Icons.Default.Home)
+    data object YearStats : Screen("year_stats", "年度总览", Icons.Default.Home)
 }
 
 val screens = listOf(Screen.Home, Screen.Stats, Screen.Settings)

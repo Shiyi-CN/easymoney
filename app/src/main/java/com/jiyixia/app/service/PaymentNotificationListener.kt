@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -38,6 +39,10 @@ class PaymentNotificationListener : NotificationListenerService() {
         @Volatile
         var isServiceConnected = false
             private set
+
+        // 通知去重：key = "金额_分钟时间戳"，value = 首次出现时间
+        private val recentNotifications = HashMap<String, Long>()
+        private const val DEDUP_WINDOW_MS = 60_000L // 1 分钟去重窗口
 
         // 支付关键词 → 分类映射
         private val MERCHANT_RULES = mapOf(
@@ -95,6 +100,21 @@ class PaymentNotificationListener : NotificationListenerService() {
         if (amount == null || amount <= 0) {
             if (BuildConfig.DEBUG) Log.d(TAG, "无法解析金额，跳过")
             return
+        }
+
+        // 通知去重：同一分钟内相同金额的通知只处理一次
+        val minuteTimestamp = System.currentTimeMillis() / 60_000 * 60_000
+        val dedupKey = "${amount}_$minuteTimestamp"
+        synchronized(recentNotifications) {
+            val lastTime = recentNotifications[dedupKey]
+            if (lastTime != null && System.currentTimeMillis() - lastTime < DEDUP_WINDOW_MS) {
+                if (BuildConfig.DEBUG) Log.d(TAG, "重复通知，跳过: key=$dedupKey")
+                return
+            }
+            recentNotifications[dedupKey] = System.currentTimeMillis()
+            // 清理过期记录
+            val now = System.currentTimeMillis()
+            recentNotifications.entries.removeIf { now - it.value > DEDUP_WINDOW_MS * 2 }
         }
 
         if (BuildConfig.DEBUG) Log.d(TAG, "识别到支付: amount=$amount, text=$allText")
@@ -302,13 +322,19 @@ class PaymentNotificationListener : NotificationListenerService() {
         Log.d(TAG, "通知监听服务已连接")
         startForeground()
         addDetection("服务已启动")
+
+        // 启动保活服务（小米等国产ROM需要）
+        KeepAliveService.start(this)
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         isServiceConnected = false
-        Log.d(TAG, "通知监听服务已断开")
-        addDetection("服务已断开")
+        Log.d(TAG, "通知监听服务已断开，尝试重新连接...")
+        addDetection("服务已断开，正在重连...")
+
+        // 尝试重新绑定（小米等国产ROM需要）
+        requestRebind(ComponentName(this, PaymentNotificationListener::class.java))
     }
 
     private fun startForeground() {

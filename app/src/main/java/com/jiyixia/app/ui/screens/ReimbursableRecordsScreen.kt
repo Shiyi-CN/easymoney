@@ -110,6 +110,7 @@ fun ReimbursableRecordsScreen(
                             record = record,
                             categories = uiState.categories,
                             isReimbursed = false,
+                            isReimbursing = uiState.isReimbursing,
                             onMarkReimbursed = { vm.markReimbursed(record) }
                         )
                     }
@@ -131,6 +132,7 @@ fun ReimbursableRecordsScreen(
                             record = record,
                             categories = uiState.categories,
                             isReimbursed = true,
+                            isReimbursing = uiState.isReimbursing,
                             onMarkReimbursed = { vm.markReimbursed(record) }
                         )
                     }
@@ -148,8 +150,10 @@ private fun ReimbursableRecordItem(
     record: Record,
     categories: List<Category>,
     isReimbursed: Boolean,
+    isReimbursing: Boolean = false,
     onMarkReimbursed: () -> Unit
 ) {
+    var showUndoDialog by remember { mutableStateOf(false) }
     val category = categories.find { it.id == record.categoryId }
     val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
 
@@ -158,6 +162,28 @@ private fun ReimbursableRecordItem(
     val amountColor = if (isReimbursed) MaterialTheme.colorScheme.onSurfaceVariant else ExpenseRed
     val badgeColor = if (isReimbursed) Color(0xFF2E7D32) else Color(0xFF1565C0)
     val badgeText = if (isReimbursed) "已报销" else "待报销"
+
+    // 撤销报销确认对话框
+    if (showUndoDialog) {
+        AlertDialog(
+            onDismissRequest = { showUndoDialog = false },
+            title = { Text("撤销报销") },
+            text = { Text("确定撤销报销？对应的收入记录将被删除。", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onMarkReimbursed()
+                    showUndoDialog = false
+                }) {
+                    Text("确定", color = Color(0xFF1565C0), fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUndoDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -247,6 +273,7 @@ private fun ReimbursableRecordItem(
                 if (!isReimbursed) {
                     Button(
                         onClick = onMarkReimbursed,
+                        enabled = !isReimbursing,
                         modifier = Modifier.height(32.dp),
                         shape = RoundedCornerShape(6.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
@@ -255,7 +282,7 @@ private fun ReimbursableRecordItem(
                         )
                     ) {
                         Text(
-                            "标记已报销",
+                            if (isReimbursing) "处理中..." else "标记已报销",
                             fontSize = 11.sp,
                             color = Color.White
                         )
@@ -263,7 +290,8 @@ private fun ReimbursableRecordItem(
                 } else {
                     // 已报销时显示「撤销报销」按钮
                     OutlinedButton(
-                        onClick = onMarkReimbursed,
+                        onClick = { showUndoDialog = true },
+                        enabled = !isReimbursing,
                         modifier = Modifier.height(32.dp),
                         shape = RoundedCornerShape(6.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
@@ -271,7 +299,10 @@ private fun ReimbursableRecordItem(
                             contentColor = Color(0xFF1565C0)
                         )
                     ) {
-                        Text("撤销报销", fontSize = 11.sp)
+                        Text(
+                            if (isReimbursing) "处理中..." else "撤销报销",
+                            fontSize = 11.sp
+                        )
                     }
                 }
             }

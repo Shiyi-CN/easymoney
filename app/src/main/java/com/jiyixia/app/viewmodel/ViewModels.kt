@@ -23,7 +23,9 @@ data class HomeUiState(
     val monthReimbursable: Long = 0L,    // 本月待报销金额
     val totalReimbursable: Long = 0L,    // 全部待报销金额
     val monthReimbursed: Long = 0L,      // 本月已报销金额
-    val reimbursableCount: Int = 0       // 本月待报销笔数
+    val reimbursableCount: Int = 0,      // 本月待报销笔数
+    val streakDays: Int = 0,             // 连续记账天数
+    val isReimbursing: Boolean = false   // 报销操作进行中
 )
 
 // ── StatsUiState ───────────────────────────────────────────────────────────────
@@ -77,13 +79,19 @@ private data class StatsReimbursementFlows(
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val repo: RecordRepository
 
+    private val _selectedType = MutableStateFlow(0)
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    private val _streakDays = MutableStateFlow(0)
+    private val _isReimbursing = MutableStateFlow(false)  // 报销操作进行中
+
     init {
         val db = (application as JiYiXiaApp).database
         repo = RecordRepository(db.recordDao(), db.categoryDao())
+        // 计算连续记账天数
+        viewModelScope.launch {
+            _streakDays.value = repo.getStreakDays()
+        }
     }
-
-    private val _selectedType = MutableStateFlow(0)
-    private val _errorMessage = MutableStateFlow<String?>(null)
 
     /** 错误信息流，UI层可以订阅显示Snackbar */
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
@@ -127,8 +135,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             repo.getReimbursableCountByDateRange(monthBounds().first, monthBounds().second)
         ) { monthReim, totalReim, monthReimbursed, reimCount ->
             HomeReimbursementFlows(monthReim, totalReim, monthReimbursed, reimCount)
+        },
+        // 连续天数 + 报销操作状态
+        combine(_streakDays, _isReimbursing) { streak, isReimbursing ->
+            Pair(streak, isReimbursing)
         }
-    ) { flows, reimFlows ->
+    ) { flows, reimFlows, (streakDays, isReimbursing) ->
         HomeUiState(
             records = flows.records,
             categories = flows.categories,
@@ -138,7 +150,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             monthReimbursable = reimFlows.monthReimbursable ?: 0L,
             totalReimbursable = reimFlows.totalReimbursable ?: 0L,
             monthReimbursed = reimFlows.monthReimbursed ?: 0L,
-            reimbursableCount = reimFlows.reimbursableCount
+            reimbursableCount = reimFlows.reimbursableCount,
+            streakDays = streakDays,
+            isReimbursing = isReimbursing
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 
@@ -226,7 +240,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 标记已报销 / 取消已报销 */
     fun markReimbursed(record: Record) {
+        // 防止重复操作
+        if (_isReimbursing.value) return
+
         viewModelScope.launch {
+            _isReimbursing.value = true
             try {
                 val wasReimbursed = record.isReimbursed
                 val newState = !wasReimbursed
@@ -237,10 +255,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     // 检查是否已有对应的报销到账记录（防止重复）
                     val existingRecords = uiState.value.records
                     val hasIncomeRecord = existingRecords.any {
-                        it.type == 1 &&
-                        it.amount == record.amount &&
-                        it.note.contains("报销到账") &&
-                        it.date > record.date
+                        it.reimbursementSourceId == record.id
                     }
 
                     if (!hasIncomeRecord) {
@@ -253,7 +268,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                             note = "[已报销] ${record.note.ifBlank { categoryName }}",
                             date = System.currentTimeMillis(),
                             isReimbursable = false,
-                            reimbursementTarget = ""
+                            reimbursementTarget = "",
+                            reimbursementSourceId = record.id
                         )
                         repo.insertRecord(incomeRecord)
                     }
@@ -262,15 +278,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 else if (wasReimbursed && !newState) {
                     val existingRecords = uiState.value.records
                     val incomeRecord = existingRecords.find {
-                        it.type == 1 &&
-                        it.amount == record.amount &&
-                        it.note.startsWith("[已报销]") &&
-                        it.date > record.date
+                        it.reimbursementSourceId == record.id
                     }
                     incomeRecord?.let { repo.deleteRecord(it) }
                 }
             } catch (e: Exception) {
                 _errorMessage.value = "标记报销失败：${e.message}"
+            } finally {
+                _isReimbursing.value = false
             }
         }
     }
@@ -305,6 +320,40 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 _errorMessage.value = "删除分类失败：${e.message}"
             }
         }
+    }
+
+    // ── 搜索/筛选 ──
+
+    private val _searchResults = MutableStateFlow<List<Record>>(emptyList())
+    val searchResults: StateFlow<List<Record>> = _searchResults.asStateFlow()
+
+    private val _isSearching = MutableStateFlow(false)
+    val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
+
+    fun searchRecords(
+        minAmount: Long? = null,
+        maxAmount: Long? = null,
+        categoryId: Long? = null,
+        keyword: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null
+    ) {
+        _isSearching.value = true
+        viewModelScope.launch {
+            try {
+                val results = repo.searchRecords(minAmount, maxAmount, categoryId, keyword, startDate, endDate)
+                _searchResults.value = results
+            } catch (e: Exception) {
+                _errorMessage.value = "搜索失败：${e.message}"
+            } finally {
+                _isSearching.value = false
+            }
+        }
+    }
+
+    fun clearSearch() {
+        _searchResults.value = emptyList()
+        _isSearching.value = false
     }
 }
 
@@ -374,4 +423,42 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
     fun prevMonth() { _monthOffset.value -= 1 }
     fun nextMonth() { if (_monthOffset.value < 0) _monthOffset.value += 1 }
+
+    // ── 近 6 个月趋势数据 ──
+
+    data class MonthTrendData(
+        val month: String,  // "6月"
+        val expense: Long,
+        val income: Long
+    )
+
+    private val _trendData = MutableStateFlow<List<MonthTrendData>>(emptyList())
+    val trendData: StateFlow<List<MonthTrendData>> = _trendData.asStateFlow()
+
+    init {
+        loadTrendData()
+    }
+
+    private fun loadTrendData() {
+        viewModelScope.launch {
+            val sdf = java.text.SimpleDateFormat("M月", java.util.Locale.getDefault())
+            val cal = java.util.Calendar.getInstance()
+            val result = mutableListOf<MonthTrendData>()
+
+            // 从当前月往前数 6 个月
+            for (i in 5 downTo 0) {
+                val tempCal = java.util.Calendar.getInstance()
+                tempCal.add(java.util.Calendar.MONTH, -i)
+                val month = sdf.format(tempCal.time)
+
+                val (start, end) = boundsFor(-i)
+                val expense = repo.getSumByTypeOnce(0, start, end)
+                val income = repo.getSumByTypeOnce(1, start, end)
+
+                result.add(MonthTrendData(month, expense, income))
+            }
+
+            _trendData.value = result
+        }
+    }
 }

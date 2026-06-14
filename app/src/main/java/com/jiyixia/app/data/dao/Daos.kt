@@ -98,6 +98,34 @@ interface RecordDao {
     /** 待报销笔数 */
     @Query("SELECT COUNT(*) FROM records WHERE type = 0 AND isReimbursable = 1 AND isReimbursed = 0 AND date BETWEEN :start AND :end")
     fun getReimbursableCountByDateRange(start: Long, end: Long): Flow<Int>
+
+    // ── 连续记账天数 ──
+
+    /** 获取所有记录的时间戳列表（用于计算连续天数） */
+    @Query("SELECT DISTINCT date FROM records ORDER BY date DESC")
+    suspend fun getAllRecordDates(): List<Long>
+
+    // ── 搜索/筛选 ──
+
+    /** 搜索记录（支持金额范围、分类、关键词、日期范围） */
+    @Query("""
+        SELECT * FROM records
+        WHERE (:minAmount IS NULL OR amount >= :minAmount)
+        AND (:maxAmount IS NULL OR amount <= :maxAmount)
+        AND (:categoryId IS NULL OR categoryId = :categoryId)
+        AND (:keyword IS NULL OR note LIKE '%' || :keyword || '%')
+        AND (:startDate IS NULL OR date >= :startDate)
+        AND (:endDate IS NULL OR date <= :endDate)
+        ORDER BY date DESC
+    """)
+    suspend fun searchRecords(
+        minAmount: Long? = null,
+        maxAmount: Long? = null,
+        categoryId: Long? = null,
+        keyword: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null
+    ): List<Record>
 }
 
 data class CategorySum(

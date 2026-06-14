@@ -38,6 +38,8 @@ import com.jiyixia.app.service.BubbleService
 import com.jiyixia.app.service.PaymentNotificationListener
 import com.jiyixia.app.ui.theme.*
 import com.jiyixia.app.util.BackupUtil
+import com.jiyixia.app.util.CrashHandler
+import com.jiyixia.app.util.UpdateChecker
 import com.jiyixia.app.util.toAmountNumber
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -60,13 +62,27 @@ private fun isXiaomi(): Boolean =
     Build.BRAND.equals("Xiaomi", ignoreCase = true) ||
     Build.BRAND.equals("Redmi", ignoreCase = true)
 
+private fun getFileName(context: Context, uri: Uri): String? {
+    var name: String? = null
+    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) {
+            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (nameIndex >= 0) {
+                name = cursor.getString(nameIndex)
+            }
+        }
+    }
+    return name
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  SettingsScreen
 // ══════════════════════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onNavigateToCategoryManagement: () -> Unit = {}
+    onNavigateToCategoryManagement: () -> Unit = {},
+    onNavigateToCrashLog: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -74,6 +90,20 @@ fun SettingsScreen(
     var showClearDialog by remember { mutableStateOf(false) }
     var showConfidenceDialog by remember { mutableStateOf(false) }
     val confidenceThreshold by ThemePreferences.getConfidenceThreshold(context).collectAsState(initial = 80)
+
+    // 更新检查状态
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var showNoUpdateToast by remember { mutableStateOf(false) }
+
+    // 备份/恢复状态
+    var backupMsg by remember { mutableStateOf("") }
+    var showBackupPasswordDialog by remember { mutableStateOf(false) }
+    var backupPassword by remember { mutableStateOf("") }
+    var restoreMsg by remember { mutableStateOf("") }
+    var showRestorePasswordDialog by remember { mutableStateOf(false) }
+    var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
 
     val listenerEnabled = isNotificationListenerEnabled(context)
     val serviceConnected = PaymentNotificationListener.isServiceConnected
@@ -335,20 +365,13 @@ fun SettingsScreen(
             SettingsDivider()
 
             // 备份数据
-            var backupMsg by remember { mutableStateOf("") }
             SettingsRow(
                 iconBg = Color(0xFFE8F5E9), icon = "💾",
                 title = "备份数据",
-                desc = "备份数据库到本地文件",
+                desc = "备份数据库到本地文件（可选加密）",
                 trailing = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp) },
                 onClick = {
-                    scope.launch {
-                        val result = BackupUtil.backup(context)
-                        backupMsg = result.fold(
-                            onSuccess = { "已备份到 $it" },
-                            onFailure = { "备份失败：${it.message}" }
-                        )
-                    }
+                    showBackupPasswordDialog = true
                 }
             )
             if (backupMsg.isNotEmpty()) {
@@ -362,17 +385,23 @@ fun SettingsScreen(
             SettingsDivider()
 
             // 恢复数据
-            var restoreMsg by remember { mutableStateOf("") }
             val restoreLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.GetContent()
             ) { uri: Uri? ->
                 uri?.let {
-                    scope.launch {
-                        val result = BackupUtil.restore(context, it)
-                        restoreMsg = result.fold(
-                            onSuccess = { "恢复成功，请重启应用" },
-                            onFailure = { "恢复失败：${it.message}" }
-                        )
+                    // 检查是否是加密文件
+                    val fileName = getFileName(context, it)
+                    if (fileName?.endsWith(".enc") == true) {
+                        pendingRestoreUri = it
+                        showRestorePasswordDialog = true
+                    } else {
+                        scope.launch {
+                            val result = BackupUtil.restore(context, it)
+                            restoreMsg = result.fold(
+                                onSuccess = { "恢复成功，请重启应用" },
+                                onFailure = { "恢复失败：${it.message}" }
+                            )
+                        }
                     }
                 }
             }
@@ -533,7 +562,32 @@ fun SettingsScreen(
             SettingsRow(
                 iconBg = Color(0xFFE8F5EE), icon = "ℹ️",
                 title = "版本",
-                desc = "记一下 v${BuildConfig.VERSION_NAME} · 轻量记账，支付即记账"
+                desc = if (isCheckingUpdate) "正在检查更新..." else "记一下 v${BuildConfig.VERSION_NAME} · 点击检查更新",
+                onClick = {
+                    if (!isCheckingUpdate) {
+                        isCheckingUpdate = true
+                        scope.launch {
+                            val info = withContext(Dispatchers.IO) {
+                                UpdateChecker.checkForUpdate()
+                            }
+                            isCheckingUpdate = false
+                            if (info != null) {
+                                updateInfo = info
+                                showUpdateDialog = true
+                            } else {
+                                showNoUpdateToast = true
+                            }
+                        }
+                    }
+                }
+            )
+            SettingsDivider()
+            val crashLogCount = remember { CrashHandler.getCrashLogs(context).size }
+            SettingsRow(
+                iconBg = Color(0xFFFFEBEE), icon = "💥",
+                title = "崩溃日志",
+                desc = if (crashLogCount > 0) "${crashLogCount} 条崩溃记录" else "暂无崩溃记录",
+                onClick = onNavigateToCrashLog
             )
         }
 
@@ -617,6 +671,184 @@ fun SettingsScreen(
             }
         )
     }
+
+    // 更新对话框
+    if (showUpdateDialog && updateInfo != null) {
+        AlertDialog(
+            onDismissRequest = { showUpdateDialog = false },
+            title = { Text("发现新版本") },
+            text = {
+                Column {
+                    Text("新版本：v${updateInfo!!.versionName}", fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(8.dp))
+                    Text("更新日志：", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(
+                            updateInfo!!.changelog,
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    UpdateChecker.openDownloadPage(context, updateInfo!!.downloadUrl)
+                    showUpdateDialog = false
+                }) {
+                    Text("下载更新")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUpdateDialog = false }) {
+                    Text("稍后再说")
+                }
+            }
+        )
+    }
+
+    // 已是最新版本 Toast
+    if (showNoUpdateToast) {
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(2000)
+            showNoUpdateToast = false
+        }
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Surface(
+                modifier = Modifier.padding(bottom = 80.dp),
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.inverseSurface
+            ) {
+                Text(
+                    "已是最新版本 ✓",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                    fontSize = 14.sp
+                )
+            }
+        }
+    }
+
+    // 备份密码输入对话框
+    if (showBackupPasswordDialog) {
+        var passwordInput by remember { mutableStateOf("") }
+        var useEncryption by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { showBackupPasswordDialog = false },
+            title = { Text("备份数据") },
+            text = {
+                Column {
+                    Text("是否对备份文件加密？", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = useEncryption,
+                            onCheckedChange = { useEncryption = it }
+                        )
+                        Text("加密备份（推荐）")
+                    }
+                    if (useEncryption) {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = passwordInput,
+                            onValueChange = { passwordInput = it },
+                            label = { Text("设置密码") },
+                            placeholder = { Text("输入备份密码") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "⚠️ 请牢记密码，恢复时需要输入",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showBackupPasswordDialog = false
+                        scope.launch {
+                            val password = if (useEncryption && passwordInput.isNotEmpty()) passwordInput else null
+                            val result = BackupUtil.backup(context, password)
+                            backupMsg = result.fold(
+                                onSuccess = { "已备份到 $it" },
+                                onFailure = { "备份失败：${it.message}" }
+                            )
+                        }
+                    },
+                    enabled = !useEncryption || passwordInput.isNotEmpty()
+                ) {
+                    Text("开始备份")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBackupPasswordDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    // 恢复密码输入对话框
+    if (showRestorePasswordDialog && pendingRestoreUri != null) {
+        var passwordInput by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showRestorePasswordDialog = false },
+            title = { Text("输入解密密码") },
+            text = {
+                Column {
+                    Text("此备份文件已加密，请输入密码", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = passwordInput,
+                        onValueChange = { passwordInput = it },
+                        label = { Text("密码") },
+                        placeholder = { Text("输入备份密码") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRestorePasswordDialog = false
+                        scope.launch {
+                            val result = BackupUtil.restore(context, pendingRestoreUri!!, passwordInput)
+                            restoreMsg = result.fold(
+                                onSuccess = { "恢复成功，请重启应用" },
+                                onFailure = { "恢复失败：${it.message}" }
+                            )
+                            pendingRestoreUri = null
+                        }
+                    },
+                    enabled = passwordInput.isNotEmpty()
+                ) {
+                    Text("恢复")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showRestorePasswordDialog = false
+                    pendingRestoreUri = null
+                }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -648,7 +880,7 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
 
 @Composable
 private fun SettingsDivider() {
-    Divider(
+    HorizontalDivider(
         modifier = Modifier.padding(start = 60.dp),
         color = BorderColor,
         thickness = 0.5.dp

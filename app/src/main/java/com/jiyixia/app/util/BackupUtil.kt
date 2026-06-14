@@ -19,10 +19,11 @@ object BackupUtil {
     private const val BACKUP_DIR = "记一下"
 
     /**
-     * 备份数据库到 Downloads/记一下/ 目录
+     * 备份数据库到 Downloads/记一下/ 目录（加密）
+     * @param password 加密密码，为空则不加密
      * @return 备份文件路径或错误信息
      */
-    fun backup(context: Context): Result<String> {
+    fun backup(context: Context, password: String? = null): Result<String> {
         return try {
             val dbFile = context.getDatabasePath(DB_NAME)
             if (!dbFile.exists()) {
@@ -30,14 +31,19 @@ object BackupUtil {
             }
 
             val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-            val fileName = "jiyixia_backup_${dateFormat.format(Date())}.db"
+            val isEncrypted = !password.isNullOrEmpty()
+            val fileName = if (isEncrypted) {
+                "jiyixia_backup_${dateFormat.format(Date())}.db.enc"
+            } else {
+                "jiyixia_backup_${dateFormat.format(Date())}.db"
+            }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 // Android 10+ 使用 MediaStore
-                backupWithMediaStore(context, dbFile, fileName)
+                backupWithMediaStore(context, dbFile, fileName, password)
             } else {
                 // Android 9 及以下使用文件系统
-                backupWithFileSystem(dbFile, fileName)
+                backupWithFileSystem(dbFile, fileName, password)
             }
         } catch (e: Exception) {
             Log.e(TAG, "备份失败", e)
@@ -48,7 +54,7 @@ object BackupUtil {
     /**
      * 使用 MediaStore 备份（Android 10+）
      */
-    private fun backupWithMediaStore(context: Context, dbFile: File, fileName: String): Result<String> {
+    private fun backupWithMediaStore(context: Context, dbFile: File, fileName: String, password: String?): Result<String> {
         val contentValues = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
             put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
@@ -63,7 +69,13 @@ object BackupUtil {
 
         context.contentResolver.openOutputStream(uri)?.use { outputStream ->
             FileInputStream(dbFile).use { inputStream ->
-                inputStream.copyTo(outputStream)
+                if (!password.isNullOrEmpty()) {
+                    // 加密备份
+                    CryptoUtil.encrypt(inputStream, outputStream, password)
+                } else {
+                    // 普通备份
+                    inputStream.copyTo(outputStream)
+                }
             }
         }
 
@@ -79,7 +91,7 @@ object BackupUtil {
     /**
      * 使用文件系统备份（Android 9 及以下）
      */
-    private fun backupWithFileSystem(dbFile: File, fileName: String): Result<String> {
+    private fun backupWithFileSystem(dbFile: File, fileName: String, password: String?): Result<String> {
         val dir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
             BACKUP_DIR
@@ -89,7 +101,17 @@ object BackupUtil {
         }
 
         val backupFile = File(dir, fileName)
-        dbFile.copyTo(backupFile, overwrite = true)
+        if (!password.isNullOrEmpty()) {
+            // 加密备份
+            FileInputStream(dbFile).use { input ->
+                FileOutputStream(backupFile).use { output ->
+                    CryptoUtil.encrypt(input, output, password)
+                }
+            }
+        } else {
+            // 普通备份
+            dbFile.copyTo(backupFile, overwrite = true)
+        }
 
         return Result.success(backupFile.absolutePath)
     }
@@ -97,19 +119,37 @@ object BackupUtil {
     /**
      * 从备份文件恢复数据库
      * @param uri 备份文件的 URI
+     * @param password 解密密码（加密备份时需要）
      * @return 恢复结果
      */
-    fun restore(context: Context, uri: Uri): Result<Unit> {
+    fun restore(context: Context, uri: Uri, password: String? = null): Result<Unit> {
         return try {
             val dbFile = context.getDatabasePath(DB_NAME)
 
             // 关闭数据库连接
             context.deleteDatabase(DB_NAME)
 
+            // 判断是否是加密文件
+            val fileName = getFileName(context, uri)
+            val isEncrypted = fileName?.endsWith(".enc") == true
+
             // 复制备份文件到数据库目录
             context.contentResolver.openInputStream(uri)?.use { inputStream ->
                 FileOutputStream(dbFile).use { outputStream ->
-                    inputStream.copyTo(outputStream)
+                    if (isEncrypted) {
+                        // 解密恢复
+                        if (password.isNullOrEmpty()) {
+                            return Result.failure(Exception("加密备份需要输入密码"))
+                        }
+                        val decryptResult = CryptoUtil.decrypt(inputStream, outputStream, password)
+                        if (!decryptResult) {
+                            return Result.failure(Exception("密码错误或备份文件损坏"))
+                        }
+                        Unit
+                    } else {
+                        // 普通恢复
+                        inputStream.copyTo(outputStream)
+                    }
                 }
             }
 
@@ -118,6 +158,22 @@ object BackupUtil {
             Log.e(TAG, "恢复失败", e)
             Result.failure(e)
         }
+    }
+
+    /**
+     * 获取文件名
+     */
+    private fun getFileName(context: Context, uri: Uri): String? {
+        var name: String? = null
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0) {
+                    name = cursor.getString(nameIndex)
+                }
+            }
+        }
+        return name
     }
 
     /**

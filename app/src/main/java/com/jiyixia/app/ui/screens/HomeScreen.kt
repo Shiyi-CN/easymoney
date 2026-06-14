@@ -217,11 +217,31 @@ fun HomeScreen(
                 reimbursable = uiState.monthReimbursable,
                 reimbursed = uiState.monthReimbursed,
                 reimbursableCount = uiState.reimbursableCount,
+                streakDays = uiState.streakDays,
                 onReimbursableClick = onNavigateToReimbursable
             )
 
+            // ── 搜索栏
+            var showSearch by remember { mutableStateOf(false) }
+            var searchKeyword by remember { mutableStateOf("") }
+            val searchResults by vm.searchResults.collectAsState()
+            val isSearching by vm.isSearching.collectAsState()
+
+            SearchBar(
+                showSearch = showSearch,
+                searchKeyword = searchKeyword,
+                isSearching = isSearching,
+                onShowSearchChange = { showSearch = it },
+                onKeywordChange = { searchKeyword = it },
+                onSearch = { vm.searchRecords(keyword = it.ifBlank { null }) },
+                onClear = {
+                    searchKeyword = ""
+                    vm.clearSearch()
+                }
+            )
+
             // ── 待确认 Banner - 固定在顶部
-            if (uiState.pendingCount > 0) {
+            if (uiState.pendingCount > 0 && !showSearch) {
                 PendingConfirmBanner(
                     count = uiState.pendingCount,
                     onConfirmAll = { vm.confirmAllRecords() }
@@ -229,7 +249,8 @@ fun HomeScreen(
             }
 
             // ── 折叠状态（在 LazyColumn 外部，Composable 上下文中）
-            val grouped = uiState.records
+            val displayRecords = if (showSearch && searchResults.isNotEmpty()) searchResults else uiState.records
+            val grouped = displayRecords
                 .groupBy { dateSdf.format(Date(it.date)) }
                 .toSortedMap(compareByDescending { it })
 
@@ -244,7 +265,7 @@ fun HomeScreen(
                     .fillMaxWidth(),
                 contentPadding = PaddingValues(bottom = 16.dp)
             ) {
-                if (uiState.records.isEmpty()) {
+                if (displayRecords.isEmpty()) {
                     item { EmptyState() }
                 } else {
                     grouped.forEach { (dateStr, dayRecords) ->
@@ -290,7 +311,8 @@ fun HomeScreen(
                                     },
                                     onReimbursable = { vm.markReimbursed(record) },
                                     onClick = { editingRecord = record },
-                                    swipeDeleteMode = swipeDeleteMode
+                                    swipeDeleteMode = swipeDeleteMode,
+                                    isReimbursing = uiState.isReimbursing
                                 )
                             }
                         }
@@ -406,6 +428,7 @@ private fun MonthOverviewCard(
     reimbursable: Long = 0L,
     reimbursed: Long = 0L,
     reimbursableCount: Int = 0,
+    streakDays: Int = 0,
     onReimbursableClick: () -> Unit = {}
 ) {
     val balance = income - expense
@@ -440,7 +463,33 @@ private fun MonthOverviewCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("记一下", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("记一下", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    // 连续记账天数徽章
+                    if (streakDays > 0) {
+                        Spacer(Modifier.width(8.dp))
+                        val emoji = when {
+                            streakDays >= 30 -> "🏆"
+                            streakDays >= 14 -> "🔥"
+                            streakDays >= 7 -> "⭐"
+                            streakDays >= 3 -> "✨"
+                            else -> "📝"
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color.White.copy(alpha = 0.2f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                "$emoji ${streakDays}天",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
                 Text(label, color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
             }
             Spacer(Modifier.height(4.dp))
@@ -602,16 +651,51 @@ private fun RecordItemCard(
     categories: List<Category>,
     onConfirm: () -> Unit,
     onReimbursed: () -> Unit = {},
-    onClick: () -> Unit = {}
+    onClick: () -> Unit = {},
+    isReimbursing: Boolean = false
 ) {
+    var showReimburseDialog by remember { mutableStateOf(false) }
     val category = categories.find { it.id == record.categoryId }
     val isPending = record.isPendingConfirm
     val isExpense = record.type == 0
-    val isReimbursed = record.note.startsWith("[已报销]")
+    val isReimbursedIncome = record.reimbursementSourceId > 0  // 收入记录：是否报销到账
+    val isReimbursed = record.isReimbursed  // 支出记录：是否已报销
+
+    // 报销/撤销报销确认对话框
+    if (showReimburseDialog) {
+        val dialogTitle = if (isReimbursed) "撤销报销" else "标记已报销"
+        val dialogText = if (isReimbursed) "确定撤销报销？对应的收入记录将被删除。" else "确定标记为已报销？将自动创建收入记录。"
+        val confirmColor = if (isReimbursed) Color(0xFF1565C0) else Color(0xFF2E7D32)
+        AlertDialog(
+            onDismissRequest = { showReimburseDialog = false },
+            title = { Text(dialogTitle) },
+            text = { Text(dialogText, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onReimbursed()
+                        showReimburseDialog = false
+                    },
+                    enabled = !isReimbursing
+                ) {
+                    Text(
+                        if (isReimbursing) "处理中..." else "确定",
+                        color = confirmColor,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReimburseDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 
     val cardBg = when {
         isPending -> Color(0xFFFFFDE7)  // 待确认：浅黄色
-        isReimbursed -> Color(0xFFE8F5E9)  // 报销到账：浅绿色
+        isReimbursedIncome -> Color(0xFFE8F5E9)  // 报销到账：浅绿色
         else -> MaterialTheme.colorScheme.surface  // 普通：白色
     }
     val iconBg = if (isExpense) Color(0xFFFFEBEE) else Color(0xFFE8F5EE)
@@ -674,7 +758,7 @@ private fun RecordItemCard(
                         modifier = Modifier
                             .clip(RoundedCornerShape(10.dp))
                             .background(badgeBg)
-                            .clickable(onClick = onReimbursed)
+                            .clickable { showReimburseDialog = true }
                             .padding(horizontal = 6.dp, vertical = 1.dp)
                     ) {
                         Text(
@@ -746,7 +830,8 @@ private fun SwipeToDismissRecordItem(
     onDelete: () -> Unit,
     onReimbursable: () -> Unit = {},
     onClick: () -> Unit = {},
-    swipeDeleteMode: Int = 0 // 0=直接删除, 1=显示按钮
+    swipeDeleteMode: Int = 0, // 0=直接删除, 1=显示按钮
+    isReimbursing: Boolean = false
 ) {
     val density = LocalDensity.current
     val deleteWidthPx = with(density) { 80.dp.toPx() }  // 最大收缩宽度
@@ -814,7 +899,8 @@ private fun SwipeToDismissRecordItem(
                     } else {
                         onClick()
                     }
-                }
+                },
+                isReimbursing = isReimbursing
             )
         }
 
@@ -845,6 +931,74 @@ private fun SwipeToDismissRecordItem(
                         modifier = Modifier.size(28.dp)
                     )
                 }
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  搜索栏
+// ══════════════════════════════════════════════════════════════════════════════
+@Composable
+private fun SearchBar(
+    showSearch: Boolean,
+    searchKeyword: String,
+    isSearching: Boolean,
+    onShowSearchChange: (Boolean) -> Unit,
+    onKeywordChange: (String) -> Unit,
+    onSearch: (String) -> Unit,
+    onClear: () -> Unit
+) {
+    if (showSearch) {
+        // 展开的搜索栏
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = searchKeyword,
+                onValueChange = {
+                    onKeywordChange(it)
+                    onSearch(it)
+                },
+                placeholder = { Text("搜索备注...", fontSize = 14.sp) },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                trailingIcon = {
+                    if (isSearching) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    }
+                }
+            )
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = {
+                onClear()
+                onShowSearchChange(false)
+            }) {
+                Text("取消")
+            }
+        }
+    } else {
+        // 收起的搜索按钮
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 4.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clickable { onShowSearchChange(true) }
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🔍", fontSize = 16.sp)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "搜索记录...",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

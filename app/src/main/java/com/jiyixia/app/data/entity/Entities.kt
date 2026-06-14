@@ -42,5 +42,6 @@ data class Record(
     val confidence: Int = 100,  // 置信度 0-100
     val isReimbursable: Boolean = false,    // 是否可报销（仅支出）
     val isReimbursed: Boolean = false,      // 是否已报销
-    val reimbursementTarget: String = ""    // 报销对象（如"XX公司""XX人"）
+    val reimbursementTarget: String = "",   // 报销对象（如"XX公司""XX人"）
+    val reimbursementSourceId: Long = 0     // 关联的原支出记录ID（仅报销到账收入记录使用）
 )

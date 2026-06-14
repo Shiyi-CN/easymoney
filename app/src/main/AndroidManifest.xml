@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- 网络权限（检查更新） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- 请求忽略电池优化（小米/国产ROM保活） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
@@ -75,6 +78,16 @@
                 android:value="floating_bubble_quick_record" />
         </service>
 
+        <!-- 保活服务 -->
+        <service
+            android:name=".service.KeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="keep_notification_listener_alive" />
+        </service>
+
         <!-- 悬浮气泡快速记账 -->
         <activity
             android:name=".ui.BubbleInputActivity"
@@ -82,6 +95,17 @@
             android:theme="@style/Theme.Transparent"
             android:taskAffinity=""
             android:excludeFromRecents="true" />
+
+        <!-- FileProvider 用于分享崩溃日志 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 </manifest>
