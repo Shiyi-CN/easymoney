@@ -31,6 +31,8 @@ import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.ui.theme.*
 import com.jiyixia.app.util.CategoryEmoji
 import com.jiyixia.app.domain.usecase.SmartParseUseCase
+import com.jiyixia.app.domain.usecase.InputValidationUseCase
+import com.jiyixia.app.domain.usecase.ValidationResult
 import com.jiyixia.app.util.toCents
 import com.jiyixia.app.viewmodel.HomeViewModel
 import kotlinx.coroutines.Job
@@ -148,7 +150,7 @@ fun QuickRecordScreen(
         delay(100)
 
         if (amountText.isNotBlank()) {
-            // 使用 VoiceCategorizer 统一解析逻辑
+            // 使用 SmartParseUseCase 统一解析逻辑
             val nameToId = displayCategories.associate { it.name to it.id }
             val defaultCategoryId = displayCategories.firstOrNull()?.id ?: 0L
             val parsed = SmartParseUseCase.parse(
@@ -173,17 +175,16 @@ fun QuickRecordScreen(
                     if (currentParsed != null && currentParsed.amount > 0) {
                         // 输入验证
                         val amountCents = currentParsed.amount.toCents()
+                        val amountValidation = InputValidationUseCase.validateAmount(amountCents)
+                        val noteValidation = InputValidationUseCase.validateNote(currentParsed.note)
+
                         when {
-                            amountCents <= 0 -> {
-                                validationError = "金额必须大于0"
+                            amountValidation is ValidationResult.Error -> {
+                                validationError = amountValidation.message
                                 return@launch
                             }
-                            amountCents > 100_000_00L -> {
-                                validationError = "金额不能超过100万"
-                                return@launch
-                            }
-                            currentParsed.note.length > 200 -> {
-                                validationError = "备注不能超过200个字符"
+                            noteValidation is ValidationResult.Error -> {
+                                validationError = noteValidation.message
                                 return@launch
                             }
                         }
@@ -309,17 +310,16 @@ fun QuickRecordScreen(
 
                             if (parsed != null && parsed.amount > 0) {
                                 val amountCents = parsed.amount.toCents()
+                                val amountValidation = InputValidationUseCase.validateAmount(amountCents)
+                                val noteValidation = InputValidationUseCase.validateNote(parsed.note)
+
                                 when {
-                                    amountCents <= 0 -> {
-                                        validationError = "金额必须大于0"
+                                    amountValidation is ValidationResult.Error -> {
+                                        validationError = amountValidation.message
                                         return@launch
                                     }
-                                    amountCents > 100_000_00L -> {
-                                        validationError = "金额不能超过100万"
-                                        return@launch
-                                    }
-                                    parsed.note.length > 200 -> {
-                                        validationError = "备注不能超过200个字符"
+                                    noteValidation is ValidationResult.Error -> {
+                                        validationError = noteValidation.message
                                         return@launch
                                     }
                                 }

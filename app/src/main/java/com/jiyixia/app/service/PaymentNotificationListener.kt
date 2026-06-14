@@ -18,6 +18,8 @@ import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.ui.MainActivity
 import com.jiyixia.app.domain.usecase.SmartParseUseCase
 import com.jiyixia.app.util.toCents
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -43,17 +45,6 @@ class PaymentNotificationListener : NotificationListenerService() {
         // 通知去重：key = "金额_分钟时间戳"，value = 首次出现时间
         private val recentNotifications = HashMap<String, Long>()
         private const val DEDUP_WINDOW_MS = 60_000L // 1 分钟去重窗口
-
-        // 支付关键词 → 分类映射
-        private val MERCHANT_RULES = mapOf(
-            "餐饮" to listOf("外卖", "餐厅", "火锅", "奶茶", "咖啡", "快餐", "小吃", "食堂", "美团外卖", "饿了么", "肯德基", "麦当劳", "星巴克", "瑞幸", "美团", "大众点评", "面包", "蛋糕", "甜品", "烧烤", "串串", "麻辣烫", "盒马", "叮咚"),
-            "交通" to listOf("打车", "地铁", "加油", "停车", "公交", "滴滴", "高德", "哈啰", "青桔", "12306", "铁路", "航空", "机票", "火车", "高速", "过路费", "ETC", "网约车", "顺风车"),
-            "购物" to listOf("超市", "便利店", "百货", "淘宝", "京东", "拼多多", "全家", "711", "罗森", "抖音", "快手", "唯品会", "闲鱼", "天猫", "苏宁", "小米商城", "华为商城", "得物", "转转", "二手"),
-            "娱乐" to listOf("电影", "游戏", "KTV", "酒吧", "门票", "景区", "旅游", "酒店", "剧本杀", "密室", "游乐园", "演唱会", "演出", "B站", "bilibili", "爱奇艺", "腾讯视频", "优酷", "芒果", "会员"),
-            "居住" to listOf("房租", "水电", "物业", "燃气", "宽带", "话费", "充值", "水费", "电费", "煤气", "取暖", "物管", "手机缴费", "固话"),
-            "医疗" to listOf("医院", "药", "体检", "诊所", "挂号", "牙科", "眼科", "门诊", "住院", "医保", "药店"),
-            "教育" to listOf("课程", "培训", "书", "学费", "考试", "教材", "文具", "网课", "得到", "知乎", "知识付费"),
-        )
 
         // 多种金额正则，覆盖微信/支付宝/银行各种格式
         private val AMOUNT_PATTERNS = listOf(
@@ -95,8 +86,21 @@ class PaymentNotificationListener : NotificationListenerService() {
             return
         }
 
-        // 解析金额
-        val amount = parseAmount(allText)
+        // 使用 SmartParseUseCase 统一解析（金额 + 分类）
+        val app = applicationContext as JiYiXiaApp
+        val db = app.database
+        val categories = runBlocking { db.categoryDao().getAll().first() }
+        val nameToId = categories.associate { it.name to it.id }
+        val defaultCategoryId = categories.firstOrNull()?.id ?: 0L
+
+        val parsed = SmartParseUseCase.parse(
+            text = allText,
+            categoryNameToId = nameToId,
+            defaultCategoryId = defaultCategoryId
+        )
+
+        // 使用 SmartParseUseCase 返回的金额
+        val amount = parsed?.amount
         if (amount == null || amount <= 0) {
             if (BuildConfig.DEBUG) Log.d(TAG, "无法解析金额，跳过")
             return
@@ -119,26 +123,14 @@ class PaymentNotificationListener : NotificationListenerService() {
 
         if (BuildConfig.DEBUG) Log.d(TAG, "识别到支付: amount=$amount, text=$allText")
 
-        // 使用 VoiceCategorizer 统一分类逻辑
-        val app = applicationContext as JiYiXiaApp
+        // 保存记录
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val db = app.database
-                val categories = db.categoryDao().getAll().first()
-                val nameToId = categories.associate { it.name to it.id }
-                val defaultCategoryId = categories.firstOrNull()?.id ?: 0L
-
-                val parsed = SmartParseUseCase.parse(
-                    text = allText,
-                    categoryNameToId = nameToId,
-                    defaultCategoryId = defaultCategoryId
-                )
-
-                val categoryName = parsed?.categoryName ?: "其他"
-                val type = if (parsed?.isExpense == false) 1 else 0
-                val confidence = parsed?.confidence ?: 50
-                val isReimbursable = parsed?.isReimbursable ?: false
-                val reimbursementTarget = parsed?.reimbursementTarget ?: ""
+                val categoryName = parsed.categoryName ?: "其他"
+                val type = if (parsed.isExpense == false) 1 else 0
+                val confidence = parsed.confidence ?: 50
+                val isReimbursable = parsed.isReimbursable ?: false
+                val reimbursementTarget = parsed.reimbursementTarget ?: ""
 
                 val category = categories.find { it.name == categoryName && it.type == type }
                     ?: categories.find { it.name == categoryName }
@@ -251,48 +243,6 @@ class PaymentNotificationListener : NotificationListenerService() {
         }
 
         return sb.toString().trim()
-    }
-
-    /** 用多种正则尝试解析金额 */
-    private fun parseAmount(text: String): Double? {
-        for (pattern in AMOUNT_PATTERNS) {
-            val match = pattern.find(text)
-            if (match != null) {
-                val amountStr = match.groupValues[1].replace(",", "").replace(" ", "")
-                val amount = amountStr.toDoubleOrNull()
-                if (amount != null && amount > 0 && amount < 1000000) {
-                    return amount
-                }
-            }
-        }
-        return null
-    }
-
-    private fun matchCategory(text: String, type: Int): Pair<String, Int> {
-        // 收入类别匹配
-        if (type == 1) {
-            val incomeRules = mapOf(
-                "工资" to listOf("工资", "薪水", "薪资", "月薪"),
-                "退款" to listOf("退款", "退费", "退回", "退票"),
-                "红包" to listOf("红包", "奖励金"),
-                "理财" to listOf("理财", "收益", "利息", "基金", "股票"),
-                "兼职" to listOf("兼职", "副业", "稿费", "接单"),
-            )
-            for ((category, keywords) in incomeRules) {
-                for (keyword in keywords) {
-                    if (text.contains(keyword)) return category to 85
-                }
-            }
-            return "其他" to 50
-        }
-
-        // 支出类别匹配
-        for ((category, keywords) in MERCHANT_RULES) {
-            for (keyword in keywords) {
-                if (text.contains(keyword)) return category to 90
-            }
-        }
-        return "其他" to 50
     }
 
     private fun addDetection(msg: String) {
