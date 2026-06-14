@@ -228,23 +228,46 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun markReimbursed(record: Record) {
         viewModelScope.launch {
             try {
-                val newState = !record.isReimbursed
+                val wasReimbursed = record.isReimbursed
+                val newState = !wasReimbursed
                 repo.setReimbursed(record.id, newState)
 
-                // 标记为已报销时，创建一条收入记录
-                if (newState) {
-                    val categoryName = uiState.value.categories
-                        .find { it.id == record.categoryId }?.name ?: "报销"
-                    val incomeRecord = Record(
-                        type = 1,  // 收入
-                        amount = record.amount,
-                        categoryId = record.categoryId,
-                        note = "报销到账·$categoryName",
-                        date = System.currentTimeMillis(),
-                        isReimbursable = false,
-                        reimbursementTarget = ""
-                    )
-                    repo.insertRecord(incomeRecord)
+                // 从"未报销"变为"已报销"时，创建收入记录
+                if (!wasReimbursed && newState) {
+                    // 检查是否已有对应的报销到账记录（防止重复）
+                    val existingRecords = uiState.value.records
+                    val hasIncomeRecord = existingRecords.any {
+                        it.type == 1 &&
+                        it.amount == record.amount &&
+                        it.note.contains("报销到账") &&
+                        it.date > record.date
+                    }
+
+                    if (!hasIncomeRecord) {
+                        val categoryName = uiState.value.categories
+                            .find { it.id == record.categoryId }?.name ?: "报销"
+                        val incomeRecord = Record(
+                            type = 1,  // 收入
+                            amount = record.amount,
+                            categoryId = record.categoryId,
+                            note = "[已报销] ${record.note.ifBlank { categoryName }}",
+                            date = System.currentTimeMillis(),
+                            isReimbursable = false,
+                            reimbursementTarget = ""
+                        )
+                        repo.insertRecord(incomeRecord)
+                    }
+                }
+                // 从"已报销"变为"未报销"时，删除对应的收入记录
+                else if (wasReimbursed && !newState) {
+                    val existingRecords = uiState.value.records
+                    val incomeRecord = existingRecords.find {
+                        it.type == 1 &&
+                        it.amount == record.amount &&
+                        it.note.startsWith("[已报销]") &&
+                        it.date > record.date
+                    }
+                    incomeRecord?.let { repo.deleteRecord(it) }
                 }
             } catch (e: Exception) {
                 _errorMessage.value = "标记报销失败：${e.message}"

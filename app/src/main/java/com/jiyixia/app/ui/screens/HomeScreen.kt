@@ -607,8 +607,13 @@ private fun RecordItemCard(
     val category = categories.find { it.id == record.categoryId }
     val isPending = record.isPendingConfirm
     val isExpense = record.type == 0
+    val isReimbursed = record.note.startsWith("[已报销]")
 
-    val cardBg = if (isPending) Color(0xFFFFFDE7) else MaterialTheme.colorScheme.surface
+    val cardBg = when {
+        isPending -> Color(0xFFFFFDE7)  // 待确认：浅黄色
+        isReimbursed -> Color(0xFFE8F5E9)  // 报销到账：浅绿色
+        else -> MaterialTheme.colorScheme.surface  // 普通：白色
+    }
     val iconBg = if (isExpense) Color(0xFFFFEBEE) else Color(0xFFE8F5EE)
 
     Row(

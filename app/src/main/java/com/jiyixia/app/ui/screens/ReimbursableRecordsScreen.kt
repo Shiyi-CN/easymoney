@@ -260,6 +260,19 @@ private fun ReimbursableRecordItem(
                             color = Color.White
                         )
                     }
+                } else {
+                    // 已报销时显示「撤销报销」按钮
+                    OutlinedButton(
+                        onClick = onMarkReimbursed,
+                        modifier = Modifier.height(32.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = Color(0xFF1565C0)
+                        )
+                    ) {
+                        Text("撤销报销", fontSize = 11.sp)
+                    }
                 }
             }
         }

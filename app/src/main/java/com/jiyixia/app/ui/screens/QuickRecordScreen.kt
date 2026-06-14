@@ -98,15 +98,19 @@ fun QuickRecordScreen(
         }
     }
 
-    // 智能默认：记住上次使用的分类（优化：更智能的默认值逻辑）
+    // 智能默认：记住上次使用的分类（只在进入页面时执行一次）
+    var hasInitialized by remember { mutableStateOf(false) }
     LaunchedEffect(uiState.records, displayCategories) {
+        // 只在首次进入页面时执行，避免手动切换时被覆盖
+        if (hasInitialized) return@LaunchedEffect
         if (displayCategories.isEmpty()) return@LaunchedEffect
 
-        // 优先级1：使用上次记录的分类
+        // 优先级1：使用上次记录的分类（但不自动切换收入/支出类型）
         val lastRecord = uiState.records.firstOrNull()
         if (lastRecord != null && displayCategories.any { it.id == lastRecord.categoryId }) {
             selectedCategoryId = lastRecord.categoryId
-            currentType = lastRecord.type
+            // 不设置 currentType，保持默认的「支出」
+            hasInitialized = true
             return@LaunchedEffect
         }
 
@@ -121,12 +125,14 @@ fun QuickRecordScreen(
             val mostUsedCategoryId = categoryFrequency.first().first
             if (displayCategories.any { it.id == mostUsedCategoryId }) {
                 selectedCategoryId = mostUsedCategoryId
+                hasInitialized = true
                 return@LaunchedEffect
             }
         }
 
         // 优先级3：使用第一个分类
         selectedCategoryId = displayCategories.first().id
+        hasInitialized = true
     }
 
     // 自动保存逻辑（仅极速模式生效）
@@ -187,14 +193,18 @@ fun QuickRecordScreen(
                             ?: displayCategories.find { it.id == selectedCategoryId }
 
                         if (currentCategory != null) {
+                            val recordType = if (currentParsed.isExpense) 0 else 1
                             vm.addRecord(
                                 amount = amountCents,
                                 categoryId = currentCategory.id,
                                 note = currentParsed.note,
-                                type = if (currentParsed.isExpense) 0 else 1,
+                                type = recordType,
                                 isReimbursable = currentParsed.isReimbursable,
                                 reimbursementTarget = currentParsed.reimbursementTarget
                             )
+
+                            // 记录成功后，更新当前类型（下一笔自动跟上）
+                            currentType = recordType
 
                             // 显示成功提示
                             showSuccess = true
@@ -319,14 +329,18 @@ fun QuickRecordScreen(
                                     ?: displayCategories.find { it.id == selectedCategoryId }
 
                                 if (currentCategory != null) {
+                                    val recordType = if (parsed.isExpense) 0 else 1
                                     vm.addRecord(
                                         amount = amountCents,
                                         categoryId = currentCategory.id,
                                         note = parsed.note,
-                                        type = if (parsed.isExpense) 0 else 1,
+                                        type = recordType,
                                         isReimbursable = parsed.isReimbursable,
                                         reimbursementTarget = parsed.reimbursementTarget
                                     )
+
+                                    // 记录成功后，更新当前类型（下一笔自动跟上）
+                                    currentType = recordType
 
                                     showSuccess = true
                                     delay(1000)
