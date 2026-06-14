@@ -22,7 +22,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class PaymentNotificationListener : NotificationListenerService() {

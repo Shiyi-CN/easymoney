@@ -357,24 +357,4 @@ class SmartParseUseCaseTest {
         // 备注现在直接使用原始输入
         assertEquals("午餐38和同事聚餐", result!!.note)
     }
-
-    // ========== cleanNote 方法 ==========
-
-    @Test
-    fun `cleanNote removes amount`() {
-        val cleaned = SmartParseUseCase.cleanNote("38元")
-        assertFalse(cleaned.contains("38"))
-    }
-
-    @Test
-    fun `cleanNote removes category keywords`() {
-        val cleaned = SmartParseUseCase.cleanNote("午餐")
-        assertFalse(cleaned.contains("午餐"))
-    }
-
-    @Test
-    fun `cleanNote removes reimbursement`() {
-        val cleaned = SmartParseUseCase.cleanNote("报销")
-        assertFalse(cleaned.contains("报销"))
-    }
 }
