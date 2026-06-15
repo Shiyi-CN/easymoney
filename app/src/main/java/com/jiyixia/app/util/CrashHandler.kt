@@ -49,6 +49,9 @@ class CrashHandler private constructor() : Thread.UncaughtExceptionHandler {
             crashDir.mkdirs()
         }
 
+        // 清理旧日志，最多保留 10 个
+        cleanOldLogs(crashDir, maxLogs = 10)
+
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         val crashFile = File(crashDir, "crash_${timestamp}.txt")
 
@@ -85,6 +88,20 @@ class CrashHandler private constructor() : Thread.UncaughtExceptionHandler {
         }
 
         crashFile.writeText(log)
+    }
+
+    /**
+     * 清理旧日志文件，保留最新的 maxLogs 个
+     */
+    private fun cleanOldLogs(crashDir: File, maxLogs: Int) {
+        val logFiles = crashDir.listFiles { file -> file.name.startsWith("crash_") }
+            ?.sortedByDescending { it.name }
+            ?: return
+
+        // 删除多余的旧日志
+        if (logFiles.size >= maxLogs) {
+            logFiles.drop(maxLogs - 1).forEach { it.delete() }
+        }
     }
 
     companion object {

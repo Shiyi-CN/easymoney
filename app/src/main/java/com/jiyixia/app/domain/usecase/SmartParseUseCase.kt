@@ -212,7 +212,8 @@ object SmartParseUseCase {
         }
 
         // 7. 收入分类（如"工资"、"报销到账"等）
-        if (incomeCategory != null && expenseCategory == null) {
+        // 优先匹配收入分类，解决"红包"等歧义关键词问题
+        if (incomeCategory != null) {
             return ParsedResult(
                 amount = amountResult.value,
                 amountText = amountResult.text,
@@ -455,30 +456,33 @@ object SmartParseUseCase {
         )
         val unitMap = mapOf('十' to 10L, '百' to 100L, '千' to 1000L, '万' to 10000L)
 
-        // 特殊情况：纯数字如 "三十八"
-        // 处理逻辑：遍历，遇到数字则累计，遇到单位则乘以单位
+        // 正确的中文数字解析逻辑
+        // 例："三千五百二十一" → 3521
         var result = 0L
-        var temp = 0L  // 当前累计的数字（万以下的）
+        var current = 0L  // 当前累计的数字（万以下的）
 
         for (ch in cn) {
             when {
                 ch in digitMap -> {
-                    temp += digitMap[ch]!!.toLong()
+                    current = digitMap[ch]!!.toLong()
                 }
                 ch in unitMap -> {
                     val unit = unitMap[ch]!!
-                    if (temp == 0L) temp = 1L  // "十" = 10
                     if (ch == '万') {
-                        result += temp * unit
-                        temp = 0
+                        // "万" 是大单位，将之前的结果和 current 都乘以万
+                        result = (result + current) * unit
+                        current = 0
                     } else {
-                        temp *= unit
+                        // 十/百/千：将 current 乘以单位加到 result
+                        if (current == 0L) current = 1L  // "十" = 10
+                        result += current * unit
+                        current = 0
                     }
                 }
             }
         }
 
-        result += temp
+        result += current
         return if (result > 0) result else null
     }
 

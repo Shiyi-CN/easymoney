@@ -12,6 +12,9 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 /**
  * GitHub Release 更新检查器
  */
@@ -28,11 +31,11 @@ object UpdateChecker {
     )
 
     /**
-     * 检查是否有新版本
+     * 检查是否有新版本（挂起函数，在 IO 线程执行）
      * @return UpdateInfo 如果有新版本，null 如果已是最新
      */
-    fun checkForUpdate(): UpdateInfo? {
-        return try {
+    suspend fun checkForUpdate(): UpdateInfo? = withContext(Dispatchers.IO) {
+        try {
             val url = URL(GITHUB_API_URL)
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"

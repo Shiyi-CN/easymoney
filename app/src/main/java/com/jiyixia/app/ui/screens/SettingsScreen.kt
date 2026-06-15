@@ -567,9 +567,7 @@ fun SettingsScreen(
                     if (!isCheckingUpdate) {
                         isCheckingUpdate = true
                         scope.launch {
-                            val info = withContext(Dispatchers.IO) {
-                                UpdateChecker.checkForUpdate()
-                            }
+                            val info = UpdateChecker.checkForUpdate()
                             isCheckingUpdate = false
                             if (info != null) {
                                 updateInfo = info
