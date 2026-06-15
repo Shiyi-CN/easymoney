@@ -143,8 +143,8 @@ class RecordRepository(
             val count = recordDao.getRecordCountByDay(dayStart, dayEnd)
             if (count > 0) {
                 streak++
-                cal.add(java.util.Calendar.DAY_OF_MONTH, -1) // 回到当天，再往前一天
-                cal.add(java.util.Calendar.DAY_OF_MONTH, -1)
+                // 回到当天，再往前一天
+                cal.add(java.util.Calendar.DAY_OF_MONTH, -2)
             } else {
                 break
             }
