@@ -35,6 +35,8 @@ import com.jiyixia.app.data.ThemeMode
 import com.jiyixia.app.data.ThemePreferences
 import com.jiyixia.app.repository.RecordRepository
 import com.jiyixia.app.service.BubbleService
+import com.jiyixia.app.service.PaymentAccessibilityService
+import com.jiyixia.app.service.PaymentDetector
 import com.jiyixia.app.service.PaymentNotificationListener
 import com.jiyixia.app.ui.theme.*
 import com.jiyixia.app.util.BackupUtil
@@ -54,6 +56,12 @@ import java.util.*
 private fun isNotificationListenerEnabled(context: Context): Boolean {
     val cn = ComponentName(context, PaymentNotificationListener::class.java)
     val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners") ?: return false
+    return flat.contains(cn.flattenToString())
+}
+
+private fun isAccessibilityServiceEnabled(context: Context): Boolean {
+    val cn = ComponentName(context, PaymentAccessibilityService::class.java)
+    val flat = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
     return flat.contains(cn.flattenToString())
 }
 
@@ -160,6 +168,35 @@ fun SettingsScreen(
                         checked = listenerEnabled && serviceConnected,
                         onCheckedChange = {
                             val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                            context.startActivity(intent)
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary)
+                    )
+                }
+            )
+            SettingsDivider()
+
+            // 屏幕检测 Toggle（AccessibilityService）
+            val a11yEnabled = isAccessibilityServiceEnabled(context)
+            val a11yRunning = PaymentAccessibilityService.isServiceEnabled
+            SettingsRow(
+                iconBg = Color(0xFFF3E5F5), icon = "📱",
+                title = "屏幕检测",
+                desc = when {
+                    !a11yEnabled -> "未开启，可检测银行等无通知的支付页面"
+                    !a11yRunning -> "已授权，服务未启动（重启App试试）"
+                    else -> "正在检测支付页面（补充通知监听）"
+                },
+                titleColor = if (a11yEnabled && a11yRunning)
+                    MaterialTheme.colorScheme.onSurface else Color(0xFF7B1FA2),
+                trailing = {
+                    Switch(
+                        checked = a11yEnabled && a11yRunning,
+                        onCheckedChange = {
+                            // 跳转到无障碍设置页面
+                            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
                             context.startActivity(intent)
                         },
                         colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary)
@@ -543,7 +580,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(8.dp))
 
         // ═══ 识别日志 ════════════════════════════════════════════════════════════
-        val detections = PaymentNotificationListener.detections
+        val detections = PaymentDetector.detectionLogs
         if (detections.isNotEmpty()) {
             SectionTitle("识别日志")
             SettingsCard {

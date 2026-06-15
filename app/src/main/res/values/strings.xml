@@ -38,4 +38,5 @@
     <string name="widget_quick_record">快速记账</string>
     <string name="pending_confirm">待确认</string>
     <string name="pending_confirm_count">%d 笔记录待确认</string>
+    <string name="accessibility_service_description">监听支付页面的交易信息，自动识别金额和分类，实现无感记账。仅在支付相关页面激活，不会读取其他页面内容。</string>
 </resources>

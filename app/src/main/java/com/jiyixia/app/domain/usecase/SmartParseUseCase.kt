@@ -41,6 +41,8 @@ object SmartParseUseCase {
             "星巴克", "麦当劳", "肯德基", "瑞幸", "蜜雪", "喜茶", "奈雪",
             "美团外卖", "饿了么", "盒马", "叮咚", "买菜", "海底捞", "必胜客",
             "肯德基", "KFC", "麦当劳", "M记", "便利店", "全家", "711", "罗森",
+            // 平台+外卖复合关键词（优先于"淘宝"匹配到"购物"）
+            "淘宝外卖", "京东外卖", "抖音外卖", "拼多多外卖",
             // 通用食物词
             "吃", "喝", "饭", "菜", "酒", "茶", "奶", "水", "汤", "粥",
             "蛋糕", "甜品", "冰淇淋", "巧克力", "饼干", "薯片"
@@ -491,8 +493,32 @@ object SmartParseUseCase {
     // ═══════════════════════════════════════════════════════════
 
     /**
+     * 分类优先级权重：同长度关键词冲突时，高权重分类优先
+     * 解决"淘宝外卖"匹配到"购物"而非"餐饮"的问题
+     */
+    private val categoryPriority = mapOf(
+        "餐饮" to 10,    // 最高：外卖/餐饮语义最明确
+        "交通" to 9,
+        "医疗" to 8,
+        "居住" to 7,
+        "教育" to 6,
+        "通讯" to 5,
+        "美容" to 4,
+        "娱乐" to 3,
+        "社交" to 2,
+        "购物" to 1,     // 较低：平台词（淘宝/京东）语义模糊，容易被覆盖
+        "办公" to 1,
+        "维修" to 1,
+        "宠物" to 1,
+        "捐赠" to 1,
+        "其他" to 0,
+    )
+
+    /**
      * 在分类关键词库中查找匹配的分类
-     * 使用最长匹配原则：匹配到的关键词越长，置信度越高
+     * 使用最长匹配 + 分类优先级原则：
+     * 1. 关键词越长，优先级越高（"淘宝外卖" > "淘宝"）
+     * 2. 同长度时，高权重分类优先（"外卖"→餐饮 > "淘宝"→购物）
      */
     private fun findCategory(
         text: String,
@@ -500,12 +526,19 @@ object SmartParseUseCase {
     ): String? {
         var bestCategory: String? = null
         var bestLength = 0
+        var bestPriority = 0
 
         for ((category, keywords) in categoryKeywords) {
+            val priority = categoryPriority[category] ?: 0
             for (keyword in keywords) {
-                if (text.contains(keyword) && keyword.length > bestLength) {
-                    bestCategory = category
-                    bestLength = keyword.length
+                if (text.contains(keyword)) {
+                    // 长度优先；同长度时按分类优先级
+                    if (keyword.length > bestLength ||
+                        (keyword.length == bestLength && priority > bestPriority)) {
+                        bestCategory = category
+                        bestLength = keyword.length
+                        bestPriority = priority
+                    }
                 }
             }
         }
