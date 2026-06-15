@@ -114,12 +114,8 @@ class PaymentAccessibilityService : AccessibilityService() {
             val hasPaymentSuccess = PAYMENT_SUCCESS_KEYWORDS.any { allText.contains(it) }
             val hasTransferKeyword = TRANSFER_KEYWORDS.any { allText.contains(it) }
 
-            if (!hasPaymentSuccess && !hasTransferKeyword) {
-                // 额外检查：是否包含支付关键词 + 金额（双重确认）
-                if (!PaymentDetector.containsPaymentKeyword(allText)) return
-                // 有支付关键词但没有成功确认，可能是支付中页面，跳过
-                return
-            }
+            // 必须有支付成功或转账关键词，否则跳过
+            if (!hasPaymentSuccess && !hasTransferKeyword) return
 
             // 提取金额
             val amount = PaymentDetector.extractAmount(allText)

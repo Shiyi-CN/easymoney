@@ -15,6 +15,7 @@ import com.jiyixia.app.ui.MainActivity
 import com.jiyixia.app.util.toCents
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -29,6 +30,9 @@ object PaymentDetector {
     private const val TAG = "PaymentDetector"
     private const val CHANNEL_ID = "payment_monitor"
     private const val DEDUP_WINDOW_MS = 60_000L // 1 分钟去重窗口
+
+    // 受管理的协程作用域，使用 SupervisorJob 避免一个子协程失败影响其他
+    private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // 通知去重：key = "金额_分钟时间戳"，value = 首次出现时间
     // 使用 LinkedHashMap 实现 LRU 缓存，最多保留 100 条记录
@@ -78,7 +82,7 @@ object PaymentDetector {
         Log.d(TAG, "检测到支付: source=$source, amount=$amount, pkg=$packageName")
 
         val app = context.applicationContext as JiYiXiaApp
-        CoroutineScope(Dispatchers.IO).launch {
+        coroutineScope.launch {
             try {
                 val db = app.database
                 val categories = db.categoryDao().getAll().first()
@@ -156,6 +160,16 @@ object PaymentDetector {
         category: String,
         isPending: Boolean
     ) {
+        // Android 13+ 检查通知权限
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val hasPermission = context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!hasPermission) {
+                Log.w(TAG, "通知权限未授予，跳过通知显示")
+                return
+            }
+        }
+
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         createChannel(nm)
 
