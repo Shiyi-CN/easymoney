@@ -34,6 +34,9 @@ class BubbleService : Service() {
         private const val STRIP_HEIGHT = 100
         private const val EDGE_MARGIN = 12 // 距离边缘的边距，稍微远一点
 
+        // 标记通知是否已显示过
+        private var hasShownNotification = false
+
         @Volatile
         var isRunning = false
             private set
@@ -50,6 +53,7 @@ class BubbleService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, BubbleService::class.java))
+            hasShownNotification = false
         }
     }
 
@@ -67,7 +71,13 @@ class BubbleService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         isRunning = true
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, createNotification())
+
+        // 只在首次启动时显示通知，避免重复打扰用户
+        if (!hasShownNotification) {
+            startForeground(NOTIFICATION_ID, createNotification())
+            hasShownNotification = true
+        }
+
         initBubble()
     }
 

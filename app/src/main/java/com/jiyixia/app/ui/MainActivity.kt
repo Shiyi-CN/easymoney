@@ -1,6 +1,7 @@
 package com.jiyixia.app.ui
 
 import android.os.Bundle
+import android.provider.Settings
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -21,6 +22,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.jiyixia.app.data.ThemeMode
 import com.jiyixia.app.data.ThemePreferences
+import com.jiyixia.app.service.BubbleService
 import com.jiyixia.app.ui.navigation.Screen
 import com.jiyixia.app.ui.navigation.screens
 import com.jiyixia.app.ui.screens.HomeScreen
@@ -38,6 +40,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // 默认开启悬浮气泡（如果有悬浮窗权限）
+        if (Settings.canDrawOverlays(this) && !BubbleService.isRunning) {
+            BubbleService.start(this)
+        }
+
         setContent {
             val context = LocalContext.current
             val themeMode by ThemePreferences.getThemeMode(context).collectAsState(initial = ThemeMode.FOLLOW_SYSTEM)
