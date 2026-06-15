@@ -18,7 +18,6 @@ import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.ui.MainActivity
 import com.jiyixia.app.domain.usecase.SmartParseUseCase
 import com.jiyixia.app.util.toCents
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -85,46 +84,46 @@ class PaymentNotificationListener : NotificationListenerService() {
             return
         }
 
-        // 使用 SmartParseUseCase 统一解析（金额 + 分类）
+        // 移入协程处理，避免阻塞主线程
         val app = applicationContext as JiYiXiaApp
-        val db = app.database
-        val categories = runBlocking { db.categoryDao().getAll().first() }
-        val nameToId = categories.associate { it.name to it.id }
-        val defaultCategoryId = categories.firstOrNull()?.id ?: 0L
-
-        val parsed = SmartParseUseCase.parse(
-            text = allText,
-            categoryNameToId = nameToId,
-            defaultCategoryId = defaultCategoryId
-        )
-
-        // 使用 SmartParseUseCase 返回的金额
-        val amount = parsed?.amount
-        if (amount == null || amount <= 0) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "无法解析金额，跳过")
-            return
-        }
-
-        // 通知去重：同一分钟内相同金额的通知只处理一次
-        val minuteTimestamp = System.currentTimeMillis() / 60_000 * 60_000
-        val dedupKey = "${amount}_$minuteTimestamp"
-        synchronized(recentNotifications) {
-            val lastTime = recentNotifications[dedupKey]
-            if (lastTime != null && System.currentTimeMillis() - lastTime < DEDUP_WINDOW_MS) {
-                if (BuildConfig.DEBUG) Log.d(TAG, "重复通知，跳过: key=$dedupKey")
-                return
-            }
-            recentNotifications[dedupKey] = System.currentTimeMillis()
-            // 清理过期记录
-            val now = System.currentTimeMillis()
-            recentNotifications.entries.removeIf { now - it.value > DEDUP_WINDOW_MS * 2 }
-        }
-
-        if (BuildConfig.DEBUG) Log.d(TAG, "识别到支付: amount=$amount, text=$allText")
-
-        // 保存记录
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                val db = app.database
+                val categories = db.categoryDao().getAll().first()
+                val nameToId = categories.associate { it.name to it.id }
+                val defaultCategoryId = categories.firstOrNull()?.id ?: 0L
+
+                val parsed = SmartParseUseCase.parse(
+                    text = allText,
+                    categoryNameToId = nameToId,
+                    defaultCategoryId = defaultCategoryId
+                )
+
+                // 使用 SmartParseUseCase 返回的金额
+                val amount = parsed?.amount
+                if (amount == null || amount <= 0) {
+                    if (BuildConfig.DEBUG) Log.d(TAG, "无法解析金额，跳过")
+                    return@launch
+                }
+
+                // 通知去重：同一分钟内相同金额的通知只处理一次
+                val minuteTimestamp = System.currentTimeMillis() / 60_000 * 60_000
+                val dedupKey = "${amount}_$minuteTimestamp"
+                synchronized(recentNotifications) {
+                    val lastTime = recentNotifications[dedupKey]
+                    if (lastTime != null && System.currentTimeMillis() - lastTime < DEDUP_WINDOW_MS) {
+                        if (BuildConfig.DEBUG) Log.d(TAG, "重复通知，跳过: key=$dedupKey")
+                        return@launch
+                    }
+                    recentNotifications[dedupKey] = System.currentTimeMillis()
+                    // 清理过期记录
+                    val now = System.currentTimeMillis()
+                    recentNotifications.entries.removeIf { now - it.value > DEDUP_WINDOW_MS * 2 }
+                }
+
+                if (BuildConfig.DEBUG) Log.d(TAG, "识别到支付: amount=$amount, text=$allText")
+
+                // 保存记录
                 val categoryName = parsed.categoryName ?: "其他"
                 val type = if (parsed.isExpense == false) 1 else 0
                 val confidence = parsed.confidence ?: 50
@@ -156,7 +155,7 @@ class PaymentNotificationListener : NotificationListenerService() {
                     addSanitizedDetection(typeLabel, amount, categoryName, confidence)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "保存记录失败", e)
+                Log.e(TAG, "处理通知失败", e)
                 addDetection("错误: ${e.message}")
             }
         }
