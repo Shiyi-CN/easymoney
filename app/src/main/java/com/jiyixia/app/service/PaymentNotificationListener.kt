@@ -253,7 +253,7 @@ class PaymentNotificationListener : NotificationListenerService() {
             val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
                 .format(java.util.Date())
             recentDetections.add(0, "$time $msg")
-            if (recentDetections.size > 20) recentDetections.removeLast()
+            if (recentDetections.size > 50) recentDetections.removeLast()
         }
     }
 
