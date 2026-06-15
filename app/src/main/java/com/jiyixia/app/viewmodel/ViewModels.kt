@@ -248,7 +248,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val wasReimbursed = record.isReimbursed
                 val newState = !wasReimbursed
-                repo.setReimbursed(record.id, newState)
 
                 // 从"未报销"变为"已报销"时，创建收入记录
                 if (!wasReimbursed && newState) {
@@ -258,10 +257,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                         it.reimbursementSourceId == record.id
                     }
 
-                    if (!hasIncomeRecord) {
+                    val incomeRecord = if (!hasIncomeRecord) {
                         val categoryName = uiState.value.categories
                             .find { it.id == record.categoryId }?.name ?: "报销"
-                        val incomeRecord = Record(
+                        Record(
                             type = 1,  // 收入
                             amount = record.amount,
                             categoryId = record.categoryId,
@@ -271,8 +270,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                             reimbursementTarget = "",
                             reimbursementSourceId = record.id
                         )
-                        repo.insertRecord(incomeRecord)
-                    }
+                    } else null
+
+                    // 使用事务：标记报销 + 创建收入记录
+                    repo.markReimbursedWithIncome(record.id, newState, incomeRecord)
                 }
                 // 从"已报销"变为"未报销"时，删除对应的收入记录
                 else if (wasReimbursed && !newState) {
@@ -280,7 +281,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     val incomeRecord = existingRecords.find {
                         it.reimbursementSourceId == record.id
                     }
-                    incomeRecord?.let { repo.deleteRecord(it) }
+
+                    if (incomeRecord != null) {
+                        // 使用事务：撤销报销 + 删除收入记录
+                        repo.undoReimbursedWithIncome(record.id, incomeRecord.id)
+                    } else {
+                        // 找不到收入记录，只更新报销状态
+                        repo.setReimbursed(record.id, false)
+                    }
                 }
             } catch (e: Exception) {
                 _errorMessage.value = "标记报销失败：${e.message}"

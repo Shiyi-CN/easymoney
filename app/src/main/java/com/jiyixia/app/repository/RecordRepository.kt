@@ -1,12 +1,10 @@
 package com.jiyixia.app.repository
 
-import android.content.Context
 import com.jiyixia.app.data.dao.CategoryDao
 import com.jiyixia.app.data.dao.CategorySum
 import com.jiyixia.app.data.dao.RecordDao
 import com.jiyixia.app.data.entity.Category
 import com.jiyixia.app.data.entity.Record
-import com.jiyixia.app.util.BackupUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -51,46 +49,19 @@ class RecordRepository(
     }
 
     /**
-     * 安全删除所有记录：先自动备份，再删除
-     * @param context Android Context，用于备份
-     * @return 备份结果，成功后自动删除
+     * 删除所有记录
+     * 注意：调用前请确保已备份
      */
-    suspend fun safeDeleteAll(context: Context): Result<String> = withContext(Dispatchers.IO) {
-        try {
-            // 1. 先备份
-            val backupResult = BackupUtil.backup(context)
-            if (backupResult.isFailure) {
-                return@withContext backupResult
-            }
-
-            // 2. 备份成功后，删除所有记录
-            // 由于 DAO 层已移除 deleteAll()，这里直接执行 SQL
-            // 注意：这里需要使用 RecordDao 的原始 SQL 执行能力
-            // 但为了保持 DAO 层的简洁性，我们使用事务方式
-            recordDao.deleteAllInTransaction()
-
-            Result.success(backupResult.getOrNull() ?: "备份成功")
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+    suspend fun deleteAll() = withContext(Dispatchers.IO) {
+        recordDao.deleteAllInTransaction()
     }
 
     /**
-     * 安全删除所有待确认记录：先自动备份，再删除
-     * @param context Android Context，用于备份
-     * @return 备份结果，成功后自动删除
+     * 删除所有待确认记录
+     * 注意：调用前请确保已备份
      */
-    suspend fun safeDeleteAllPending(context: Context): Result<String> = withContext(Dispatchers.IO) {
-        try {
-            val backupResult = BackupUtil.backup(context)
-            if (backupResult.isFailure) {
-                return@withContext backupResult
-            }
-            recordDao.deleteAllPending()
-            Result.success(backupResult.getOrNull() ?: "备份成功")
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+    suspend fun deleteAllPending() = withContext(Dispatchers.IO) {
+        recordDao.deleteAllPending()
     }
 
     // Categories
@@ -119,6 +90,18 @@ class RecordRepository(
         recordDao.setReimbursed(id, reimbursed)
     }
 
+    /** 事务：标记报销并创建收入记录 */
+    suspend fun markReimbursedWithIncome(recordId: Long, reimbursed: Boolean, incomeRecord: Record?) =
+        withContext(Dispatchers.IO) {
+            recordDao.markReimbursedWithIncome(recordId, reimbursed, incomeRecord)
+        }
+
+    /** 事务：撤销报销并删除收入记录 */
+    suspend fun undoReimbursedWithIncome(recordId: Long, incomeRecordId: Long) =
+        withContext(Dispatchers.IO) {
+            recordDao.undoReimbursedWithIncome(recordId, incomeRecordId)
+        }
+
     // ── 搜索/筛选 ──
 
     suspend fun searchRecords(
@@ -137,24 +120,31 @@ class RecordRepository(
     /**
      * 计算连续记账天数
      * 从今天开始往前数，连续有记录的天数
+     * 优化：逐日查询数据库，避免加载所有记录到内存
      */
     suspend fun getStreakDays(): Int = withContext(Dispatchers.IO) {
-        val dates = recordDao.getAllRecordDates()
-        if (dates.isEmpty()) return@withContext 0
-
-        // 将时间戳转换为日期字符串（只保留年月日）
-        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
-        val dateSet = dates.map { sdf.format(java.util.Date(it)) }.toSet()
-
-        val today = java.util.Calendar.getInstance()
+        val cal = java.util.Calendar.getInstance()
         var streak = 0
 
-        // 从今天开始往前检查
+        // 从今天开始往前逐日检查
         while (true) {
-            val dateStr = sdf.format(today.time)
-            if (dateStr in dateSet) {
+            // 设置为当天的 00:00:00
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal.set(java.util.Calendar.MINUTE, 0)
+            cal.set(java.util.Calendar.SECOND, 0)
+            cal.set(java.util.Calendar.MILLISECOND, 0)
+            val dayStart = cal.timeInMillis
+
+            // 设置为次日的 00:00:00
+            cal.add(java.util.Calendar.DAY_OF_MONTH, 1)
+            val dayEnd = cal.timeInMillis
+
+            // 查询当天是否有记录
+            val count = recordDao.getRecordCountByDay(dayStart, dayEnd)
+            if (count > 0) {
                 streak++
-                today.add(java.util.Calendar.DAY_OF_MONTH, -1)
+                cal.add(java.util.Calendar.DAY_OF_MONTH, -1) // 回到当天，再往前一天
+                cal.add(java.util.Calendar.DAY_OF_MONTH, -1)
             } else {
                 break
             }

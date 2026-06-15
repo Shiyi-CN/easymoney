@@ -606,14 +606,16 @@ fun SettingsScreen(
                     val db = (context.applicationContext as JiYiXiaApp).database
                     val repo = RecordRepository(db.recordDao(), db.categoryDao())
                     scope.launch {
-                        val result = repo.safeDeleteAll(context)
-                        if (result.isSuccess) {
+                        // 1. 先备份
+                        val backupResult = BackupUtil.backup(context)
+                        if (backupResult.isFailure) {
                             showClearDialog = false
-                            // 可以在这里显示成功提示
-                        } else {
-                            // 可以在这里显示错误提示
-                            showClearDialog = false
+                            return@launch
                         }
+
+                        // 2. 备份成功后删除
+                        repo.deleteAll()
+                        showClearDialog = false
                     }
                 }) {
                     Text("删除", color = ExpenseRed, fontWeight = FontWeight.SemiBold)

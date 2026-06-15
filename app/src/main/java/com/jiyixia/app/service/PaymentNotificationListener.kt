@@ -41,7 +41,12 @@ class PaymentNotificationListener : NotificationListenerService() {
             private set
 
         // 通知去重：key = "金额_分钟时间戳"，value = 首次出现时间
-        private val recentNotifications = HashMap<String, Long>()
+        // 使用 LinkedHashMap 实现 LRU 缓存，最多保留 100 条记录
+        private val recentNotifications = object : LinkedHashMap<String, Long>(100, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
+                return size > 100
+            }
+        }
         private const val DEDUP_WINDOW_MS = 60_000L // 1 分钟去重窗口
 
         // 多种金额正则，覆盖微信/支付宝/银行各种格式

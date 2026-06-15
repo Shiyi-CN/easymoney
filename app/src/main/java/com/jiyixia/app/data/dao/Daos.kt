@@ -95,6 +95,30 @@ interface RecordDao {
     @Query("UPDATE records SET isReimbursed = :reimbursed WHERE id = :id")
     suspend fun setReimbursed(id: Long, reimbursed: Boolean)
 
+    /** 事务：标记报销并创建收入记录 */
+    @Transaction
+    suspend fun markReimbursedWithIncome(
+        recordId: Long,
+        reimbursed: Boolean,
+        incomeRecord: Record?
+    ) {
+        setReimbursed(recordId, reimbursed)
+        incomeRecord?.let { insert(it) }
+    }
+
+    /** 事务：撤销报销并删除收入记录 */
+    @Transaction
+    suspend fun undoReimbursedWithIncome(
+        recordId: Long,
+        incomeRecordId: Long
+    ) {
+        setReimbursed(recordId, false)
+        deleteById(incomeRecordId)
+    }
+
+    @Query("DELETE FROM records WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
     /** 待报销笔数 */
     @Query("SELECT COUNT(*) FROM records WHERE type = 0 AND isReimbursable = 1 AND isReimbursed = 0 AND date BETWEEN :start AND :end")
     fun getReimbursableCountByDateRange(start: Long, end: Long): Flow<Int>
@@ -104,6 +128,10 @@ interface RecordDao {
     /** 获取所有记录的时间戳列表（用于计算连续天数） */
     @Query("SELECT DISTINCT date FROM records ORDER BY date DESC")
     suspend fun getAllRecordDates(): List<Long>
+
+    /** 检查指定日期是否有记录（按天判断） */
+    @Query("SELECT COUNT(*) FROM records WHERE date >= :dayStart AND date < :dayEnd")
+    suspend fun getRecordCountByDay(dayStart: Long, dayEnd: Long): Int
 
     // ── 搜索/筛选 ──
 
