@@ -26,9 +26,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.jiyixia.app.JiYiXiaApp
 import com.jiyixia.app.data.RecordMode
 import com.jiyixia.app.data.ThemeMode
@@ -113,9 +116,32 @@ fun SettingsScreen(
     var showRestorePasswordDialog by remember { mutableStateOf(false) }
     var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
 
-    val listenerEnabled = isNotificationListenerEnabled(context)
-    val serviceConnected = PaymentNotificationListener.isServiceConnected
+    // 使用可变状态，以便在生命周期事件中更新
+    var listenerEnabled by remember { mutableStateOf(isNotificationListenerEnabled(context)) }
+    var serviceConnected by remember { mutableStateOf(PaymentNotificationListener.isServiceConnected) }
+    var a11yEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
+    var a11yRunning by remember { mutableStateOf(PaymentAccessibilityService.isServiceEnabled) }
+    var bubbleEnabled by remember { mutableStateOf(BubbleService.isRunning) }
     val xiaomi = isXiaomi()
+
+    // 监听生命周期事件，在页面重新获得焦点时刷新状态
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                // 页面重新获得焦点，刷新所有状态
+                listenerEnabled = isNotificationListenerEnabled(context)
+                serviceConnected = PaymentNotificationListener.isServiceConnected
+                a11yEnabled = isAccessibilityServiceEnabled(context)
+                a11yRunning = PaymentAccessibilityService.isServiceEnabled
+                bubbleEnabled = BubbleService.isRunning
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     // 主题模式状态
     val themeMode by ThemePreferences.getThemeMode(context).collectAsState(initial = ThemeMode.FOLLOW_SYSTEM)
@@ -177,8 +203,6 @@ fun SettingsScreen(
             SettingsDivider()
 
             // 屏幕检测 Toggle（AccessibilityService）
-            val a11yEnabled = isAccessibilityServiceEnabled(context)
-            val a11yRunning = PaymentAccessibilityService.isServiceEnabled
             SettingsRow(
                 iconBg = Color(0xFFF3E5F5), icon = "📱",
                 title = "屏幕检测",
@@ -206,7 +230,6 @@ fun SettingsScreen(
             SettingsDivider()
 
             // 悬浮气泡 Toggle
-            var bubbleEnabled by remember { mutableStateOf(BubbleService.isRunning) }
             SettingsRow(
                 iconBg = Color(0xFFE3F2FD), icon = "💬",
                 title = "悬浮气泡",
