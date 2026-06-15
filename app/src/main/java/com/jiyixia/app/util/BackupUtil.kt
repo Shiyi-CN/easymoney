@@ -159,18 +159,28 @@ object BackupUtil {
                 return Result.failure(Exception("备份文件为空或损坏"))
             }
 
-            // 3. 检查 SQLite 文件头（magic number: "SQLite format 3"）
+            // 3. 检查 SQLite 文件头（magic number: "SQLite format 3\000"，共 16 字节）
             val isValidSqlite = tempFile.inputStream().use { stream ->
                 val header = ByteArray(16)
                 val bytesRead = stream.read(header)
-                // SQLite 文件头以 "SQLite format 3" 开头
+                // 完整检查 "SQLite format 3" (15字节) + null 字节
                 bytesRead >= 16 &&
                     header[0] == 'S'.code.toByte() &&
                     header[1] == 'Q'.code.toByte() &&
                     header[2] == 'L'.code.toByte() &&
                     header[3] == 'i'.code.toByte() &&
                     header[4] == 't'.code.toByte() &&
-                    header[5] == 'e'.code.toByte()
+                    header[5] == 'e'.code.toByte() &&
+                    header[6] == ' '.code.toByte() &&
+                    header[7] == 'f'.code.toByte() &&
+                    header[8] == 'o'.code.toByte() &&
+                    header[9] == 'r'.code.toByte() &&
+                    header[10] == 'm'.code.toByte() &&
+                    header[11] == 'a'.code.toByte() &&
+                    header[12] == 't'.code.toByte() &&
+                    header[13] == ' '.code.toByte() &&
+                    header[14] == '3'.code.toByte() &&
+                    header[15] == 0.toByte()
             }
 
             if (!isValidSqlite) {
