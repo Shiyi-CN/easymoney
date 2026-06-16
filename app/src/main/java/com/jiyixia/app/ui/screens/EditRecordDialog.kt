@@ -38,6 +38,7 @@ fun EditRecordDialog(
     var isReimbursable by remember { mutableStateOf(record.isReimbursable) }
     var reimbursementTarget by remember { mutableStateOf(record.reimbursementTarget) }
     var isCategoryExpanded by remember { mutableStateOf(false) }
+    var selectedType by remember { mutableIntStateOf(record.type) }  // 0=支出, 1=收入
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -49,6 +50,43 @@ fun EditRecordDialog(
                     .heightIn(max = 450.dp),  // 限制最大高度
                 verticalArrangement = Arrangement.spacedBy(8.dp)  // 减少间距
             ) {
+                // 类型选择（支出/收入）
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(0 to "支出", 1 to "收入").forEach { (type, label) ->
+                        val isSelected = selectedType == type
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (isSelected) {
+                                        if (type == 0) ExpenseRed.copy(alpha = 0.1f)
+                                        else IncomeGreen.copy(alpha = 0.1f)
+                                    } else Surface2
+                                )
+                                .clickable {
+                                    selectedType = type
+                                    // 切换类型时重置分类选择
+                                    selectedCategoryId = categories.firstOrNull { it.type == type }?.id ?: selectedCategoryId
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                label,
+                                fontSize = 14.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (isSelected) {
+                                    if (type == 0) ExpenseRed else IncomeGreen
+                                } else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
                 // 金额输入（压缩上下宽度）
                 OutlinedTextField(
                     value = amountText,
@@ -83,6 +121,8 @@ fun EditRecordDialog(
                     if (isCategoryExpanded) {
                         Spacer(modifier = Modifier.height(6.dp))  // 恢复间距
                         val cols = 4
+                        // 根据选中的类型过滤分类
+                        val filteredCategories = categories.filter { it.type == selectedType }
 
                         // 使用 LazyVerticalGrid 添加滚动功能
                         LazyVerticalGrid(
@@ -91,8 +131,8 @@ fun EditRecordDialog(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),  // 恢复间距
                             modifier = Modifier.heightIn(max = 120.dp)  // 限制高度
                         ) {
-                            items(categories.size) { idx ->
-                                val cat = categories[idx]
+                            items(filteredCategories.size) { idx ->
+                                val cat = filteredCategories[idx]
                                 val isSelected = selectedCategoryId == cat.id
                                 Box(
                                     modifier = Modifier
@@ -164,11 +204,12 @@ fun EditRecordDialog(
                     val amountCents = amountText.toAmountCents()
                     if (amountCents > 0) {
                         val updatedRecord = record.copy(
+                            type = selectedType,
                             amount = amountCents,
                             categoryId = selectedCategoryId,
                             note = noteText,
-                            isReimbursable = isReimbursable,
-                            reimbursementTarget = if (isReimbursable) reimbursementTarget else ""
+                            isReimbursable = if (selectedType == 1) false else isReimbursable,
+                            reimbursementTarget = if (selectedType == 1) "" else if (isReimbursable) reimbursementTarget else ""
                         )
                         onSave(updatedRecord)
                     }

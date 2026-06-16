@@ -123,6 +123,14 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 必须有支付成功或转账关键词，否则跳过
             if (!hasPaymentSuccess && !hasTransferKeyword) return
 
+            // 额外过滤：排除转账输入界面（有"转账给"但没有"成功"、"完成"等确认词）
+            // 避免在用户输入金额时就触发记录
+            val isInputPage = allText.contains("转账给") && !allText.contains("成功") && !allText.contains("完成") && !allText.contains("已支付")
+            if (isInputPage) {
+                if (BuildConfig.DEBUG) Log.d(TAG, "检测到转账输入界面，跳过")
+                return
+            }
+
             // 提取金额
             val amount = PaymentDetector.extractAmount(allText)
             if (amount == null || amount <= 0) {
