@@ -64,9 +64,10 @@ object PaymentDetector {
     ) {
         if (amount <= 0) return
 
-        // 去重：同一分钟内相同金额只处理一次
+        // 去重：同一分钟内相同金额 + 相同包名只处理一次
+        // 唯一键 = 金额_包名_分钟时间戳
         val minuteTimestamp = System.currentTimeMillis() / 60_000 * 60_000
-        val dedupKey = "${amount}_$minuteTimestamp"
+        val dedupKey = "${amount}_${packageName}_$minuteTimestamp"
         synchronized(recentDetections) {
             val lastTime = recentDetections[dedupKey]
             if (lastTime != null && System.currentTimeMillis() - lastTime < DEDUP_WINDOW_MS) {
