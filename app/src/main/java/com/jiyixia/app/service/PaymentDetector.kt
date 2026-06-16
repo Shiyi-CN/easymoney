@@ -96,11 +96,36 @@ object PaymentDetector {
                 )
 
                 val parsedAmount = parsed?.amount ?: amount
-                val categoryName = parsed?.categoryName ?: "其他"
+                var categoryName = parsed?.categoryName ?: "其他"
                 val type = if (parsed?.isExpense == false) 1 else 0
-                val confidence = parsed?.confidence ?: 50
+                var confidence = parsed?.confidence ?: 50
                 val isReimbursable = parsed?.isReimbursable ?: false
                 val reimbursementTarget = parsed?.reimbursementTarget ?: ""
+
+                // 基于包名的场景推断：修正分类
+                // 1. 外卖专属 app → 强制分类为餐饮
+                if (packageName in FOOD_DELIVERY_PACKAGES && categoryName != "餐饮") {
+                    Log.d(TAG, "外卖app包名推断: $categoryName → 餐饮")
+                    categoryName = "餐饮"
+                    confidence = 90
+                }
+                // 2. 综合平台 → 检查外卖/出行线索
+                else if (packageName in MULTI_CATEGORY_PACKAGES) {
+                    val isFoodHint = FOOD_DELIVERY_HINTS.any { text.contains(it) }
+                    val isRideHint = RIDE_HAILING_HINTS.any { text.contains(it) }
+                    when {
+                        isFoodHint && categoryName != "餐饮" -> {
+                            Log.d(TAG, "综合平台外卖线索: $categoryName → 餐饮")
+                            categoryName = "餐饮"
+                            confidence = 85
+                        }
+                        isRideHint && categoryName != "交通" -> {
+                            Log.d(TAG, "综合平台出行线索: $categoryName → 交通")
+                            categoryName = "交通"
+                            confidence = 85
+                        }
+                    }
+                }
 
                 val category = categories.find { it.name == categoryName && it.type == type }
                     ?: categories.find { it.name == categoryName }
@@ -239,11 +264,19 @@ object PaymentDetector {
         "com.xunmeng.pinduoduo",              // 拼多多
         "com.ss.android.ugc.aweme",           // 抖音
         "com.sina.weibo",                     // 微博
-        // 出行
+        // 出行 / 打车
         "com.autonavi.minimap",               // 高德地图
         "com.baidu.BaiduMap",                 // 百度地图
         "com.didiglobal.passenger",           // 滴滴出行
         "com.didi.global",                    // 滴滴出行（国际版）
+        "com.sdu.didi.psnger",                // 滴滴出行（国内新版）
+        "com.yongche",                        // 易到用车
+        "com.jingyao.driver",                 // 曹操出行
+        "com.taxiservice",                    // T3出行
+        "com.hellobike",                      // 哈啰出行
+        "com.mobike",                         // 摩拜
+        "com.meituan.taxi",                   // 美团打车
+        "com.xiaojukeji.hitch",               // 滴滴顺风车
     )
 
     /** 银行 app 包名前缀 */
@@ -272,6 +305,63 @@ object PaymentDetector {
         return BANK_APP_PREFIXES.any { packageName.startsWith(it) }
     }
 
+    /**
+     * 聊天类 app（微信/QQ）需要更严格的通知过滤
+     * 这些 app 的通知可能是聊天消息，不能仅凭"退款"等词就触发
+     */
+    private val CHAT_APP_PACKAGES = setOf(
+        "com.tencent.mm",       // 微信
+        "com.tencent.mobileqq", // QQ
+        "com.sina.weibo",       // 微博
+    )
+
+    /** 聊天类 app 必须包含的支付确认关键词（二选一） */
+    private val CHAT_APP_PAYMENT_CONFIRM = listOf(
+        "微信支付", "微信转账", "收款到账", "零钱到账",
+        "支付成功", "付款成功", "转账成功", "退款到账",
+        "已支付", "已付款", "已转账", "已退款",
+        "商户消费", "扫码支付", "付款码",
+        "QQ钱包", "QQ支付",
+    )
+
+    /**
+     * 外卖专属 app：这些 app 的支付几乎都是餐饮/外卖
+     * 即使通知文本不含"外卖"关键词，也强制分类为餐饮
+     */
+    private val FOOD_DELIVERY_PACKAGES = setOf(
+        "com.sankuai.meituan.takeoutnew",     // 美团外卖
+        "me.ele",                             // 饿了么
+        "com.meituan.taxi",                   // 美团打车（虽然不是外卖，但美团系）
+    )
+
+    /**
+     * 综合平台 app：可能是外卖也可能是购物
+     * 需要通过通知文本中的线索判断场景
+     */
+    private val MULTI_CATEGORY_PACKAGES = mapOf(
+        "com.taobao.taobao" to "淘宝",
+        "com.jingdong.app.mall" to "京东",
+        "com.sankuai.meituan" to "美团",
+        "com.dianping.v1" to "大众点评",
+        "com.xunmeng.pinduoduo" to "拼多多",
+        "com.ss.android.ugc.aweme" to "抖音",
+    )
+
+    /** 综合平台的外卖/餐饮线索关键词 */
+    private val FOOD_DELIVERY_HINTS = listOf(
+        "外卖", "饿了么", "美团外卖", "配送", "骑手",
+        "餐", "饭", "菜", "吃", "喝", "奶茶", "咖啡",
+        "午餐", "晚餐", "早餐", "夜宵", "宵夜",
+        "汉堡", "披萨", "炸鸡", "麻辣烫", "烧烤",
+        "美团买菜", "叮咚买菜", "盒马",
+    )
+
+    /** 综合平台的出行/打车线索关键词 */
+    private val RIDE_HAILING_HINTS = listOf(
+        "打车", "行程", "车费", "出行", "快车", "专车",
+        "顺风车", "网约车", "代驾", "骑行",
+    )
+
     /** 检查文本是否包含支付关键词 */
     fun containsPaymentKeyword(text: String): Boolean {
         val keywords = listOf(
@@ -283,6 +373,16 @@ object PaymentDetector {
             "工资", "报销", "提现"
         )
         return keywords.any { text.contains(it) }
+    }
+
+    /**
+     * 聊天类 app 的严格过滤
+     * 微信/QQ 的通知可能是聊天消息，必须包含明确的支付确认词才处理
+     * @return true 表示该通知应该被处理
+     */
+    fun shouldProcessFromChatApp(packageName: String, text: String): Boolean {
+        if (packageName !in CHAT_APP_PACKAGES) return true // 非聊天类 app 走普通过滤
+        return CHAT_APP_PAYMENT_CONFIRM.any { text.contains(it) }
     }
 
     /** 金额正则（供两个检测层共用） */

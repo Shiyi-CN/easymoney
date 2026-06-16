@@ -56,6 +56,12 @@ class PaymentNotificationListener : NotificationListenerService() {
             return
         }
 
+        // 聊天类 app（微信/QQ）严格过滤：必须包含支付确认词才处理
+        if (!PaymentDetector.shouldProcessFromChatApp(packageName, allText)) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "聊天类app通知缺少支付确认词，跳过")
+            return
+        }
+
         // 提取金额
         val amount = PaymentDetector.extractAmount(allText)
         if (amount == null || amount <= 0) {
