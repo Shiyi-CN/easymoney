@@ -12,6 +12,7 @@ import com.jiyixia.app.JiYiXiaApp
 import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.domain.usecase.SmartParseUseCase
 import com.jiyixia.app.ui.MainActivity
+import com.jiyixia.app.util.UserLearningManager
 import com.jiyixia.app.util.toCents
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -126,6 +127,14 @@ object PaymentDetector {
                             confidence = 85
                         }
                     }
+                }
+
+                // 用户自学习：检查是否学习过该商户的分类
+                val learnedCategory = UserLearningManager.getLearnedCategory(context, text.take(20))
+                if (learnedCategory != null && learnedCategory != categoryName) {
+                    Log.d(TAG, "用户学习修正: $categoryName → $learnedCategory")
+                    categoryName = learnedCategory
+                    confidence = 95  // 用户学习的分类置信度最高
                 }
 
                 val category = categories.find { it.name == categoryName && it.type == type }
