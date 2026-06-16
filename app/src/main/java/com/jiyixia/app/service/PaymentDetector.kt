@@ -134,14 +134,25 @@ object PaymentDetector {
                     ?: categories.firstOrNull()
 
                 if (category != null) {
-                    val isPending = confidence < 80
                     val typeLabel = if (type == 1) "收入" else "支出"
+
+                    // 置信度分级处理
+                    // 高置信度（>80）→ 直接入账
+                    // 中置信度（60-80）→ 标记"待确认"，通知用户确认
+                    // 低置信度（<60）→ 标记"待分类"，通知用户确认
+                    val isPending = confidence < 80
+                    val notePrefix = when {
+                        confidence >= 80 -> typeLabel
+                        confidence >= 60 -> "$typeLabel·待确认"
+                        else -> "$typeLabel·待分类"
+                    }
+
                     db.recordDao().insert(
                         Record(
                             type = type,
                             amount = parsedAmount.toCents(),
                             categoryId = category.id,
-                            note = "$typeLabel·$categoryName",
+                            note = "$notePrefix·$categoryName",
                             date = System.currentTimeMillis(),
                             isPendingConfirm = isPending,
                             confidence = confidence,
@@ -149,8 +160,8 @@ object PaymentDetector {
                             reimbursementTarget = reimbursementTarget
                         )
                     )
-                    showDetectNotification(context, parsedAmount, "$typeLabel·$categoryName", isPending)
-                    addLog("$source $typeLabel ¥$parsedAmount → $categoryName (${confidence}%)")
+                    showDetectNotification(context, parsedAmount, "$notePrefix·$categoryName", isPending)
+                    addLog("$source $notePrefix ¥$parsedAmount → $categoryName (${confidence}%)")
                 } else {
                     // 分类查找失败，仍记录并通知（标记为待确认）
                     val fallbackCategory = categories.firstOrNull()
