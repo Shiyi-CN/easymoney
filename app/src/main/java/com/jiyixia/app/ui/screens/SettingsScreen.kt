@@ -357,6 +357,64 @@ fun SettingsScreen(
                 SettingsDivider()
             }
 
+            // 后台保活引导（所有设备）
+            SettingsRow(
+                iconBg = Color(0xFFE8F5E9), icon = "🔋",
+                title = "后台保活",
+                desc = "确保自动记账服务持续运行",
+                trailing = {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF4CAF50))
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("建议开启", color = Color.White, fontSize = 10.sp)
+                    }
+                },
+                onClick = {
+                    // 跳转电池优化设置
+                    try {
+                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        }
+                        context.startActivity(intent)
+                    } catch (_: Exception) {
+                        // 如果跳转失败，跳转到应用详情设置
+                        try {
+                            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                            context.startActivity(intent)
+                        } catch (_: Exception) {}
+                    }
+                }
+            )
+            SettingsDivider()
+
+            // 后台保活引导卡
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFE8F5E9))
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
+                Text("后台保活设置步骤", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF2E7D32))
+                Spacer(Modifier.height(6.dp))
+                listOf(
+                    "① 点击上方「后台保活」→ 关闭电池优化",
+                    "② 确保无障碍服务已开启（上方「屏幕检测」）",
+                    "③ 部分手机需手动开启自启动权限",
+                    "④ 避免使用省电模式或一键清理"
+                ).forEach { step ->
+                    Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                        Text("·  ", color = Color(0xFF2E7D32), fontSize = 12.sp)
+                        Text(step, fontSize = 12.sp, color = Color(0xFF1B5E20))
+                    }
+                }
+            }
+            SettingsDivider()
+
             // 记账模式
             val recordMode by ThemePreferences.getRecordMode(context).collectAsState(initial = RecordMode.CONFIRM)
             SettingsRow(
