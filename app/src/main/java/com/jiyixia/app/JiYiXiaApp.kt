@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 import com.jiyixia.app.util.CrashHandler
+import com.jiyixia.app.util.RuleManager
 
 class JiYiXiaApp : Application() {
     val database: AppDatabase by lazy { AppDatabase.getInstance(this) }
@@ -17,6 +18,8 @@ class JiYiXiaApp : Application() {
         super.onCreate()
         // 初始化崩溃日志捕获
         CrashHandler.getInstance().init(this)
+        // 加载识别规则
+        RuleManager.load(this)
         initPresetCategories()
     }
 

@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "description": "支付检测规则配置",
+  "lastUpdated": "2026-06-16",
+
+  "paymentApps": {
+    "exact": [
+      "com.eg.android.AlipayGphone",
+      "com.tencent.mm",
+      "com.tencent.mobileqq",
+      "com.unionpay",
+      "com.tencent.wetype",
+      "com.taobao.taobao",
+      "com.jingdong.app.mall",
+      "com.sankuai.meituan",
+      "com.sankuai.meituan.takeoutnew",
+      "me.ele",
+      "com.dianping.v1",
+      "com.xunmeng.pinduoduo",
+      "com.ss.android.ugc.aweme",
+      "com.sina.weibo",
+      "com.autonavi.minimap",
+      "com.baidu.BaiduMap",
+      "com.didiglobal.passenger",
+      "com.didi.global",
+      "com.sdu.didi.psnger",
+      "com.yongche",
+      "com.jingyao.driver",
+      "com.taxiservice",
+      "com.hellobike",
+      "com.mobike",
+      "com.meituan.taxi",
+      "com.xiaojukeji.hitch"
+    ],
+    "prefixes": [
+      "com.icbc",
+      "com.chinamworld",
+      "com.android.bankabc",
+      "com.boc.bocsoft",
+      "com.bankcomm",
+      "com.cmbchina",
+      "com.spdbccc",
+      "com.pingan",
+      "com.cgbchina",
+      "com.cmbc.mbank",
+      "com.cib",
+      "com.cebbank",
+      "com.hxb",
+      "com.bankofbeijing",
+      "com.yitong.mbank.psbc",
+      "com.psbc"
+    ]
+  },
+
+  "chatApps": [
+    "com.tencent.mm",
+    "com.tencent.mobileqq",
+    "com.sina.weibo"
+  ],
+
+  "chatAppPaymentConfirm": [
+    "微信支付", "支付成功", "付款成功", "转账成功",
+    "已支付", "已付款", "已转账", "已扣款",
+    "收款到账", "转账到账", "红包到账",
+    "零钱提现", "零钱充值",
+    "支付通知", "扣款通知", "消费通知"
+  ],
+
+  "foodDeliveryApps": [
+    "com.sankuai.meituan.takeoutnew",
+    "me.ele"
+  ],
+
+  "multiCategoryApps": {
+    "com.taobao.taobao": "购物",
+    "com.jingdong.app.mall": "购物",
+    "com.sankuai.meituan": "外卖",
+    "com.dianping.v1": "餐饮",
+    "com.xunmeng.pinduoduo": "购物",
+    "com.ss.android.ugc.aweme": "购物"
+  },
+
+  "foodDeliveryHints": [
+    "外卖", "配送", "骑手", "送达", "取餐",
+    "餐", "饭", "菜", "食", "吃",
+    "奶茶", "咖啡", "饮品", "饮料",
+    "美团外卖", "饿了么", "肯德基", "麦当劳",
+    "星巴克", "瑞幸", "蜜雪", "喜茶",
+    "海底捞", "必胜客", "汉堡王"
+  ],
+
+  "rideHailingHints": [
+    "打车", "行程", "车费", "出行", "快车", "专车",
+    "顺风车", "网约车", "代驾", "骑行",
+    "滴滴", "高德打车", "曹操出行", "T3出行",
+    "哈啰出行", "美团打车", "嘀嗒"
+  ],
+
+  "paymentKeywords": [
+    "支付", "付款", "转账", "扣款", "消费", "支出", "收款", "到账",
+    "买单", "结算", "充值", "缴费", "还款", "汇款", "入账", "退款",
+    "微信支付", "支付宝", "Alipay",
+    "信用卡", "借记卡", "银行卡",
+    "订单", "商户", "门店", "交易",
+    "工资", "报销", "提现"
+  ],
+
+  "paymentSuccessKeywords": [
+    "支付成功", "付款成功", "转账成功", "交易成功", "购买成功",
+    "支付完成", "付款完成", "转账完成", "交易完成",
+    "已支付", "已付款", "已转账", "已扣款",
+    "支付¥", "支付￥", "付款¥", "付款￥",
+    "确认支付", "确认付款",
+    "行程费用", "车费支付", "已支付车费", "支付车费",
+    "行程支付", "打车费用", "出行费用", "车费已付",
+    "支付行程", "行程已支付", "费用已支付"
+  ],
+
+  "transferKeywords": [
+    "转账金额", "转账给", "转入", "汇款成功",
+    "交易详情", "扣款通知", "消费通知",
+    "行程详情", "订单详情", "出行账单"
+  ],
+
+  "amountPatterns": [
+    "(?:支出|消费|付款|扣款|支付|转账|付款成功|支付成功|还款|缴费|退款|汇入|汇出)[^\\d]*([\\d,.]+)\\s*元",
+    "[¥￥]\\s*([\\d,.]+)",
+    "([\\d,.]+)\\s*元",
+    "(?:向|收|转给).{0,15}转(?:账|款)[^\\d]*([\\d,.]+)",
+    "到账[^\\d]*([\\d,.]+)",
+    "(?:交易)?金额[：:]\\s*[¥￥]?\\s*([\\d,.]+)",
+    "扣款[^\\d]*([\\d,.]+)",
+    "入账[^\\d]*([\\d,.]+)"
+  ]
+}
