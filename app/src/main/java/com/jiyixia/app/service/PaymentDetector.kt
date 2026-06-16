@@ -12,6 +12,7 @@ import com.jiyixia.app.JiYiXiaApp
 import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.domain.usecase.SmartParseUseCase
 import com.jiyixia.app.ui.MainActivity
+import com.jiyixia.app.util.RuleManager
 import com.jiyixia.app.util.UserLearningManager
 import com.jiyixia.app.util.toCents
 import kotlinx.coroutines.CoroutineScope
@@ -105,16 +106,27 @@ object PaymentDetector {
                 val reimbursementTarget = parsed?.reimbursementTarget ?: ""
 
                 // 基于包名的场景推断：修正分类
+                // 优先从 RuleManager 加载规则，回退到硬编码
+                val ruleFoodApps = RuleManager.getFoodDeliveryApps()
+                val ruleMultiApps = RuleManager.getMultiCategoryApps()
+                val ruleFoodHints = RuleManager.getFoodDeliveryHints()
+                val ruleRideHints = RuleManager.getRideHailingHints()
+
+                val foodApps = if (ruleFoodApps.isNotEmpty()) ruleFoodApps else FOOD_DELIVERY_PACKAGES
+                val multiApps = if (ruleMultiApps.isNotEmpty()) ruleMultiApps else MULTI_CATEGORY_PACKAGES
+                val foodHints = if (ruleFoodHints.isNotEmpty()) ruleFoodHints else FOOD_DELIVERY_HINTS
+                val rideHints = if (ruleRideHints.isNotEmpty()) ruleRideHints else RIDE_HAILING_HINTS
+
                 // 1. 外卖专属 app → 强制分类为餐饮
-                if (packageName in FOOD_DELIVERY_PACKAGES && categoryName != "餐饮") {
+                if (packageName in foodApps && categoryName != "餐饮") {
                     Log.d(TAG, "外卖app包名推断: $categoryName → 餐饮")
                     categoryName = "餐饮"
                     confidence = 90
                 }
                 // 2. 综合平台 → 检查外卖/出行线索
-                else if (packageName in MULTI_CATEGORY_PACKAGES) {
-                    val isFoodHint = FOOD_DELIVERY_HINTS.any { text.contains(it) }
-                    val isRideHint = RIDE_HAILING_HINTS.any { text.contains(it) }
+                else if (packageName in multiApps) {
+                    val isFoodHint = foodHints.any { text.contains(it) }
+                    val isRideHint = rideHints.any { text.contains(it) }
                     when {
                         isFoodHint && categoryName != "餐饮" -> {
                             Log.d(TAG, "综合平台外卖线索: $categoryName → 餐饮")
@@ -322,6 +334,17 @@ object PaymentDetector {
 
     /** 判断是否为支付相关 app */
     fun isPaymentApp(packageName: String): Boolean {
+        // 优先从 RuleManager 加载规则
+        val rulePackages = RuleManager.getPaymentAppPackages()
+        val rulePrefixes = RuleManager.getBankAppPrefixes()
+
+        if (rulePackages.isNotEmpty()) {
+            // 使用动态规则
+            if (packageName in rulePackages) return true
+            return rulePrefixes.any { packageName.startsWith(it) }
+        }
+
+        // 回退到硬编码规则
         if (packageName in PAYMENT_APP_PACKAGES) return true
         return BANK_APP_PREFIXES.any { packageName.startsWith(it) }
     }
@@ -385,6 +408,13 @@ object PaymentDetector {
 
     /** 检查文本是否包含支付关键词 */
     fun containsPaymentKeyword(text: String): Boolean {
+        // 优先从 RuleManager 加载规则
+        val ruleKeywords = RuleManager.getPaymentKeywords()
+        if (ruleKeywords.isNotEmpty()) {
+            return ruleKeywords.any { text.contains(it) }
+        }
+
+        // 回退到硬编码规则
         val keywords = listOf(
             "支付", "付款", "转账", "扣款", "消费", "支出", "收款", "到账",
             "买单", "结算", "充值", "缴费", "还款", "汇款", "入账", "退款",
@@ -402,7 +432,18 @@ object PaymentDetector {
      * @return true 表示该通知应该被处理
      */
     fun shouldProcessFromChatApp(packageName: String, text: String): Boolean {
-        if (packageName !in CHAT_APP_PACKAGES) return true // 非聊天类 app 走普通过滤
+        // 优先从 RuleManager 加载规则
+        val ruleChatApps = RuleManager.getChatAppPackages()
+        val ruleConfirmWords = RuleManager.getChatAppPaymentConfirm()
+
+        if (ruleChatApps.isNotEmpty()) {
+            // 使用动态规则
+            if (packageName !in ruleChatApps) return true
+            return ruleConfirmWords.any { text.contains(it) }
+        }
+
+        // 回退到硬编码规则
+        if (packageName !in CHAT_APP_PACKAGES) return true
         return CHAT_APP_PAYMENT_CONFIRM.any { text.contains(it) }
     }
 
