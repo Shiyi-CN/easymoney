@@ -46,12 +46,20 @@ class PaymentAccessibilityService : AccessibilityService() {
             "支付行程", "行程已支付", "费用已支付",
         )
 
-        // 银行/转账确认页特征
+        // 银行/转账确认页特征（必须是"已完成"的确认页，不能是输入页）
         private val TRANSFER_KEYWORDS = listOf(
-            "转账金额", "转账给", "转入", "汇款成功",
+            "转账成功", "汇款成功", "转入成功",
             "交易详情", "扣款通知", "消费通知",
             // 打车/出行转账
             "行程详情", "订单详情", "出行账单",
+        )
+
+        /** 转账输入页面的特征关键词（有这些词但没有"成功"等确认词 = 输入页） */
+        private val INPUT_PAGE_KEYWORDS = listOf(
+            "转账给", "向", "付款给", "转账金额",
+            "确认转账", "确认付款", "确认支付",
+            "输入金额", "输入密码", "请输入",
+            "选择付款方式", "选择到账方式",
         )
     }
 
@@ -120,12 +128,15 @@ class PaymentAccessibilityService : AccessibilityService() {
             val hasPaymentSuccess = PAYMENT_SUCCESS_KEYWORDS.any { allText.contains(it) }
             val hasTransferKeyword = TRANSFER_KEYWORDS.any { allText.contains(it) }
 
-            // 必须有支付成功或转账关键词，否则跳过
+            // 必须有支付成功或转账确认关键词，否则跳过
             if (!hasPaymentSuccess && !hasTransferKeyword) return
 
-            // 额外过滤：排除转账输入界面（有"转账给"但没有"成功"、"完成"等确认词）
-            // 避免在用户输入金额时就触发记录
-            val isInputPage = allText.contains("转账给") && !allText.contains("成功") && !allText.contains("完成") && !allText.contains("已支付")
+            // 额外过滤：排除转账输入界面
+            // 输入界面特征：有"转账给"/"确认转账"等词，但没有"成功"/"完成"/"已支付"等确认词
+            val hasConfirmWord = allText.contains("成功") || allText.contains("完成") ||
+                    allText.contains("已支付") || allText.contains("已付款") ||
+                    allText.contains("已扣款") || allText.contains("已转账")
+            val isInputPage = INPUT_PAGE_KEYWORDS.any { allText.contains(it) } && !hasConfirmWord
             if (isInputPage) {
                 if (BuildConfig.DEBUG) Log.d(TAG, "检测到转账输入界面，跳过")
                 return

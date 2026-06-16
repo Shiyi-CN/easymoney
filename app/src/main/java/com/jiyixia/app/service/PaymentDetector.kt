@@ -100,10 +100,23 @@ object PaymentDetector {
 
                 val parsedAmount = parsed?.amount ?: amount
                 var categoryName = parsed?.categoryName ?: "其他"
-                val type = if (parsed?.isExpense == false) 1 else 0
+                var type = if (parsed?.isExpense == false) 1 else 0
                 var confidence = parsed?.confidence ?: 50
                 val isReimbursable = parsed?.isReimbursable ?: false
                 val reimbursementTarget = parsed?.reimbursementTarget ?: ""
+
+                // 收支类型修正：基于包名+文本判断
+                // 微信/支付宝主动转账给他人 = 支出（即使文本含"到账"等收入词）
+                // 银行短信"到账" = 收入
+                val isTransferOut = isTransferOutgoing(packageName, text)
+                if (isTransferOut && type == 1) {
+                    Log.d(TAG, "转账支出修正: 收入→支出 (主动转账给他人)")
+                    type = 0  // 修正为支出
+                    if (categoryName == "退款" || categoryName == "红包") {
+                        categoryName = "其他"
+                    }
+                    confidence = minOf(confidence, 75)  // 降低置信度，标记为待确认
+                }
 
                 // 基于包名的场景推断：修正分类
                 // 优先从 RuleManager 加载规则，回退到硬编码
@@ -445,6 +458,44 @@ object PaymentDetector {
         // 回退到硬编码规则
         if (packageName !in CHAT_APP_PACKAGES) return true
         return CHAT_APP_PAYMENT_CONFIRM.any { text.contains(it) }
+    }
+
+    /**
+     * 判断是否为"主动转账给他人"（支出行为）
+     *
+     * 微信/支付宝中用户主动转账给他人，虽然文本可能包含"到账"等收入词，
+     * 但实际是支出行为。需要根据包名+文本特征判断。
+     *
+     * 判断规则：
+     * 1. 来自微信/支付宝/QQ（非银行短信）
+     * 2. 文本包含"转账给"/"向...转账"/"付款给"等主动转账特征
+     * 3. 或者文本包含"转账"但不包含"收款"/"收到"等被动收入特征
+     */
+    private fun isTransferOutgoing(packageName: String, text: String): Boolean {
+        // 银行短信和短信来源不做转账支出修正（银行"到账"通常是收入）
+        if (packageName.startsWith("sms:")) return false
+        if (packageName.startsWith("com.icbc") || packageName.startsWith("com.chinamworld") ||
+            packageName.startsWith("com.cmbchina") || packageName.startsWith("com.bankcomm") ||
+            packageName.startsWith("com.boc") || packageName.startsWith("com.android.bankabc")) {
+            return false
+        }
+
+        // 明确的主动转账特征
+        val outgoingKeywords = listOf(
+            "转账给", "向", "付款给", "转给",
+            "确认转账", "转账成功", "已转账",
+        )
+        val hasOutgoingKeyword = outgoingKeywords.any { text.contains(it) }
+
+        // 明确的被动收入特征（收款方视角）
+        val incomingKeywords = listOf(
+            "收款", "收到", "入账", "收到转账",
+            "转账收款", "好友转账", "收到红包",
+        )
+        val hasIncomingKeyword = incomingKeywords.any { text.contains(it) }
+
+        // 有主动转账特征且无被动收入特征 = 转账支出
+        return hasOutgoingKeyword && !hasIncomingKeyword
     }
 
     /** 金额正则（供两个检测层共用） */

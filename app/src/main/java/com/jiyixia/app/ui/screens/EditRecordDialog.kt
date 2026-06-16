@@ -47,7 +47,7 @@ fun EditRecordDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 450.dp),  // 限制最大高度
+                    .heightIn(max = 520.dp),  // 增加高度确保类型选择可见
                 verticalArrangement = Arrangement.spacedBy(8.dp)  // 减少间距
             ) {
                 // 类型选择（支出/收入）
