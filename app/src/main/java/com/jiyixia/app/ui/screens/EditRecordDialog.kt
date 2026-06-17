@@ -25,6 +25,7 @@ import com.jiyixia.app.ui.theme.*
 import com.jiyixia.app.util.toAmountCents
 import com.jiyixia.app.util.toAmountNumber
 import com.jiyixia.app.util.UserLearningManager
+import com.jiyixia.app.util.SubCategoryManager
 
 /**
  * 编辑记录对话框
@@ -163,6 +164,50 @@ fun EditRecordDialog(
                             }
                         }
                     }
+
+                    // 细分标签选择（如果当前分类有细分标签）
+                    val selectedCategoryName = categories.find { it.id == selectedCategoryId }?.name ?: ""
+                    val subCategories = remember(selectedCategoryName) {
+                        SubCategoryManager.getSubCategories(context, selectedCategoryName)
+                    }
+
+                    if (subCategories.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            subCategories.take(8).forEach { subCat ->
+                                val isSubSelected = noteText.contains(subCat)
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(
+                                            if (isSubSelected) MaterialTheme.colorScheme.primaryContainer
+                                            else Surface2
+                                        )
+                                        .clickable {
+                                            // 点击细分标签，添加到备注
+                                            noteText = if (isSubSelected) {
+                                                noteText.replace(subCat, "").trim()
+                                            } else {
+                                                if (noteText.isBlank()) subCat else "$noteText $subCat"
+                                            }
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        subCat,
+                                        fontSize = 12.sp,
+                                        color = if (isSubSelected) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // 备注输入（压缩上下宽度）
@@ -257,6 +302,15 @@ fun EditRecordDialog(
                                 if (merchantKey.isNotBlank()) {
                                     UserLearningManager.learn(context, merchantKey, categoryName)
                                 }
+                            }
+                        }
+
+                        // 智能新增细分标签：从备注中提取可能的细分标签
+                        val selectedCategoryName = categories.find { it.id == selectedCategoryId }?.name ?: ""
+                        if (selectedCategoryName.isNotBlank() && noteText.isNotBlank()) {
+                            val suggestedSub = SubCategoryManager.suggestSubCategory(noteText, selectedCategoryName)
+                            if (suggestedSub != null) {
+                                SubCategoryManager.addSubCategory(context, selectedCategoryName, suggestedSub)
                             }
                         }
 
