@@ -14,6 +14,7 @@ android {
         targetSdk = 34
         versionCode = 17
         versionName = "1.3.7"
+        testOnly = false  // 允许正式安装，不标记为 test-only
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
