@@ -790,10 +790,12 @@ private fun RecordItemCard(
             }
             // 时间显示
             val dateFormat = remember { java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()) }
+            // date 为 0 时回退到 createdAt
+            val displayTime = if (record.date > 0) record.date else record.createdAt
             Text(
-                dateFormat.format(java.util.Date(record.date)),
+                dateFormat.format(java.util.Date(displayTime)),
                 fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
             )
         }
 

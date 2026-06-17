@@ -4,4 +4,14 @@
     <files-path
         name="crash_logs"
         path="crash/" />
+
+    <!-- 外部缓存（APK 分享安装） -->
+    <external-cache-path
+        name="external_cache"
+        path="." />
+
+    <!-- 外部文件 -->
+    <external-files-path
+        name="external_files"
+        path="." />
 </paths>

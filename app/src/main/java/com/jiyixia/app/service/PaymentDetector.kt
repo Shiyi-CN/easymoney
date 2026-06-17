@@ -140,21 +140,49 @@ object PaymentDetector {
                     confidence = minOf(confidence, 75)
                 }
 
-                // 支付宝支付修正：支付宝支付成功页面可能包含"余额宝"、"收益"等词
-                // 但实际是支付行为，不是理财收入
+                // 支付宝支付修正：区分支付行为和真正收入
+                // 支付行为（修正为支出）：包含"支付成功"、"付款成功"、"已支付"等
+                // 真正收入（保持收入）：包含"收到"、"到账"、"收益"、"红包"等
                 val alipayPackages = setOf(
                     "com.eg.android.AlipayGphone",  // 支付宝
                     "com.eg.android.AlipayGphone.x86",  // 支付宝 x86
                 )
-                if (packageName in alipayPackages && type == 1 && categoryName == "理财") {
-                    // 支付宝支付成功页面包含"余额宝"、"收益"等词，但实际是支付
-                    // 检查是否有支付成功关键词
-                    val hasPaymentSuccess = listOf("支付成功", "付款成功", "已支付", "已付款").any { text.contains(it) }
-                    if (hasPaymentSuccess) {
-                        Log.d(TAG, "支付宝支付修正: 理财收入→支出 (支付成功页面)")
+                if (packageName in alipayPackages && type == 1) {
+                    // 支付行为关键词（用户主动支付）
+                    val paymentKeywords = listOf(
+                        "支付成功", "付款成功", "已支付", "已付款", "已扣款",
+                        "扫码支付", "付款码", "转账成功", "已转账"
+                    )
+                    val hasPaymentKeyword = paymentKeywords.any { text.contains(it) }
+
+                    // 真正收入关键词（用户被动收到）
+                    val incomeKeywords = listOf(
+                        "收到", "到账", "收益", "红包", "退款", "转入",
+                        "余额宝收益", "基金分红", "理财产品到期", "利息到账"
+                    )
+                    val hasIncomeKeyword = incomeKeywords.any { text.contains(it) }
+
+                    // 有支付关键词且没有收入关键词 → 修正为支出
+                    if (hasPaymentKeyword && !hasIncomeKeyword) {
+                        Log.d(TAG, "支付宝支付修正: 收入→支出 (检测到支付关键词)")
                         type = 0
-                        categoryName = "其他"
-                        confidence = 75
+                        if (categoryName == "理财" || categoryName == "红包" || categoryName == "退款" || categoryName == "中奖") {
+                            categoryName = "其他"
+                        }
+                        confidence = minOf(confidence, 75)
+                    }
+                    // 有收入关键词 → 保持收入（真正的收入）
+                    else if (hasIncomeKeyword) {
+                        Log.d(TAG, "支付宝收入保持: 检测到收入关键词")
+                    }
+                    // 没有明确关键词 → 默认修正为支出（保守策略）
+                    else {
+                        Log.d(TAG, "支付宝默认修正: 收入→支出 (无明确关键词)")
+                        type = 0
+                        if (categoryName == "理财" || categoryName == "红包" || categoryName == "退款" || categoryName == "中奖") {
+                            categoryName = "其他"
+                        }
+                        confidence = minOf(confidence, 70)
                     }
                 }
 
