@@ -788,6 +788,13 @@ private fun RecordItemCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            // 时间显示
+            val dateFormat = remember { java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()) }
+            Text(
+                dateFormat.format(java.util.Date(record.date)),
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            )
         }
 
         // 金额

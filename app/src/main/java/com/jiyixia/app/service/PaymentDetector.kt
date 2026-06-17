@@ -140,6 +140,24 @@ object PaymentDetector {
                     confidence = minOf(confidence, 75)
                 }
 
+                // 支付宝支付修正：支付宝支付成功页面可能包含"余额宝"、"收益"等词
+                // 但实际是支付行为，不是理财收入
+                val alipayPackages = setOf(
+                    "com.eg.android.AlipayGphone",  // 支付宝
+                    "com.eg.android.AlipayGphone.x86",  // 支付宝 x86
+                )
+                if (packageName in alipayPackages && type == 1 && categoryName == "理财") {
+                    // 支付宝支付成功页面包含"余额宝"、"收益"等词，但实际是支付
+                    // 检查是否有支付成功关键词
+                    val hasPaymentSuccess = listOf("支付成功", "付款成功", "已支付", "已付款").any { text.contains(it) }
+                    if (hasPaymentSuccess) {
+                        Log.d(TAG, "支付宝支付修正: 理财收入→支出 (支付成功页面)")
+                        type = 0
+                        categoryName = "其他"
+                        confidence = 75
+                    }
+                }
+
                 // 基于包名的场景推断：修正分类
                 // 优先从 RuleManager 加载规则，回退到硬编码
                 val ruleFoodApps = RuleManager.getFoodDeliveryApps()
