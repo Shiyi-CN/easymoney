@@ -45,8 +45,9 @@ class PaymentNotificationListener : NotificationListenerService() {
 
         val notification = sbn.notification ?: return
         val allText = extractAllText(notification)
+        val title = extractTitle(notification)
 
-        if (BuildConfig.DEBUG) Log.d(TAG, "收到通知: pkg=$packageName, text=$allText")
+        if (BuildConfig.DEBUG) Log.d(TAG, "收到通知: pkg=$packageName, title=$title, text=$allText")
 
         if (allText.isBlank()) return
 
@@ -57,7 +58,8 @@ class PaymentNotificationListener : NotificationListenerService() {
         }
 
         // 聊天类 app（微信/QQ）严格过滤：必须包含支付确认词才处理
-        if (!PaymentDetector.shouldProcessFromChatApp(packageName, allText)) {
+        // 传入标题，用于识别官方支付账号通知
+        if (!PaymentDetector.shouldProcessFromChatApp(packageName, allText, title)) {
             if (BuildConfig.DEBUG) Log.d(TAG, "聊天类app通知缺少支付确认词，跳过")
             return
         }
@@ -69,14 +71,24 @@ class PaymentNotificationListener : NotificationListenerService() {
             return
         }
 
+        // 提取通知时间（优先使用通知时间，作为支付时间的参考）
+        val notificationTime = sbn.notification?.`when`?.takeIf { it > 0 } ?: System.currentTimeMillis()
+
         // 委托给统一检测入口
         PaymentDetector.processDetection(
             source = "通知",
             amount = amount,
             text = allText,
             packageName = packageName,
-            context = applicationContext
+            context = applicationContext,
+            detectedTime = notificationTime
         )
+    }
+
+    /** 提取通知标题（用于识别微信支付等官方账号） */
+    private fun extractTitle(notification: Notification): String? {
+        val extras = notification.extras ?: return null
+        return extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
     }
 
     /** 全面提取通知文本（兼容微信/支付宝各种格式） */

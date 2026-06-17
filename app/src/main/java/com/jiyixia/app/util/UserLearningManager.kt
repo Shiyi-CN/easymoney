@@ -76,4 +76,33 @@ object UserLearningManager {
     fun clearAll(context: Context) {
         getPrefs(context).edit().clear().apply()
     }
+
+    // ═══════════════════════════════════════════════════════════
+    //  报销对象历史记录
+    // ═══════════════════════════════════════════════════════════
+
+    private const val REIMBURSE_TARGETS_KEY = "reimburse_targets"
+
+    /**
+     * 保存报销对象到历史记录
+     */
+    fun saveReimburseTarget(context: Context, target: String) {
+        if (target.isBlank()) return
+        val targets = getReimburseTargets(context).toMutableList()
+        // 去重：如果已存在则移到最前面
+        targets.remove(target)
+        targets.add(0, target)
+        // 最多保留 20 个
+        if (targets.size > 20) targets.removeLast()
+        getPrefs(context).edit().putString(REIMBURSE_TARGETS_KEY, targets.joinToString("||")).apply()
+    }
+
+    /**
+     * 获取报销对象历史记录
+     */
+    fun getReimburseTargets(context: Context): List<String> {
+        val raw = getPrefs(context).getString(REIMBURSE_TARGETS_KEY, "") ?: ""
+        if (raw.isBlank()) return emptyList()
+        return raw.split("||").filter { it.isNotBlank() }
+    }
 }

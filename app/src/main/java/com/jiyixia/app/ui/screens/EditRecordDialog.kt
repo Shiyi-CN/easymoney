@@ -3,8 +3,10 @@ package com.jiyixia.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -12,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -21,6 +24,7 @@ import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.ui.theme.*
 import com.jiyixia.app.util.toAmountCents
 import com.jiyixia.app.util.toAmountNumber
+import com.jiyixia.app.util.UserLearningManager
 
 /**
  * 编辑记录对话框
@@ -39,6 +43,10 @@ fun EditRecordDialog(
     var reimbursementTarget by remember { mutableStateOf(record.reimbursementTarget) }
     var isCategoryExpanded by remember { mutableStateOf(false) }
     var selectedType by remember { mutableIntStateOf(record.type) }  // 0=支出, 1=收入
+
+    // 报销对象历史记录
+    val context = LocalContext.current
+    val reimburseTargets = remember { UserLearningManager.getReimburseTargets(context) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -185,7 +193,7 @@ fun EditRecordDialog(
                     )
                 }
 
-                // 报销对象输入（仅在可报销时显示，压缩上下宽度）
+                // 报销对象输入（仅在可报销时显示）
                 if (isReimbursable) {
                     OutlinedTextField(
                         value = reimbursementTarget,
@@ -195,6 +203,28 @@ fun EditRecordDialog(
                         singleLine = true,
                         textStyle = LocalTextStyle.current.copy(fontSize = 14.sp)
                     )
+
+                    // 报销对象历史选择（最多显示5个）
+                    if (reimburseTargets.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            reimburseTargets.take(5).forEach { target ->
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Surface2)
+                                        .clickable { reimbursementTarget = target }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(target, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         },
@@ -203,14 +233,20 @@ fun EditRecordDialog(
                 onClick = {
                     val amountCents = amountText.toAmountCents()
                     if (amountCents > 0) {
+                        val finalReimbursable = if (selectedType == 1) false else isReimbursable
+                        val finalTarget = if (selectedType == 1) "" else if (isReimbursable) reimbursementTarget else ""
                         val updatedRecord = record.copy(
                             type = selectedType,
                             amount = amountCents,
                             categoryId = selectedCategoryId,
                             note = noteText,
-                            isReimbursable = if (selectedType == 1) false else isReimbursable,
-                            reimbursementTarget = if (selectedType == 1) "" else if (isReimbursable) reimbursementTarget else ""
+                            isReimbursable = finalReimbursable,
+                            reimbursementTarget = finalTarget
                         )
+                        // 保存报销对象到历史记录
+                        if (finalReimbursable && finalTarget.isNotBlank()) {
+                            UserLearningManager.saveReimburseTarget(context, finalTarget)
+                        }
                         onSave(updatedRecord)
                     }
                 }

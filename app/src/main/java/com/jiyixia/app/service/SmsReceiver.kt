@@ -87,13 +87,17 @@ class SmsReceiver : BroadcastReceiver() {
 
             if (BuildConfig.DEBUG) Log.d(TAG, "短信检测到支付: sender=$sender, amount=$amount")
 
+            // 使用短信时间戳作为支付时间的参考
+            val smsTime = message.timestampMillis?.takeIf { it > 0 } ?: System.currentTimeMillis()
+
             // 调用统一检测入口
             PaymentDetector.processDetection(
                 source = "短信",
                 amount = amount,
                 text = body,
                 packageName = "sms:$sender",
-                context = context
+                context = context,
+                detectedTime = smsTime
             )
         }
     }

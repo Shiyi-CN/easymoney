@@ -31,7 +31,7 @@ object PaymentDetector {
 
     private const val TAG = "PaymentDetector"
     private const val CHANNEL_ID = "payment_monitor"
-    private const val DEDUP_WINDOW_MS = 60_000L // 1 分钟去重窗口
+    private const val DEDUP_WINDOW_MS = 3_600_000L // 1 小时去重窗口（防止同一通知跨分钟重复）
 
     // 受管理的协程作用域，使用 SupervisorJob 避免一个子协程失败影响其他
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -51,25 +51,27 @@ object PaymentDetector {
     /**
      * 处理一次支付检测
      *
-     * @param source 检测来源（"通知" 或 "屏幕"）
+     * @param source 检测来源（"通知" 或 "屏幕" 或 "短信"）
      * @param amount 金额
      * @param text 原始文本（用于分类和备注）
      * @param packageName 来源 app 包名
      * @param context Context
+     * @param detectedTime 检测到的时间（通知时间/短信时间），默认为当前时间
      */
     fun processDetection(
         source: String,
         amount: Double,
         text: String,
         packageName: String,
-        context: Context
+        context: Context,
+        detectedTime: Long = System.currentTimeMillis()
     ) {
         if (amount <= 0) return
 
-        // 去重：同一分钟内相同金额 + 相同包名只处理一次
-        // 唯一键 = 金额_包名_分钟时间戳
-        val minuteTimestamp = System.currentTimeMillis() / 60_000 * 60_000
-        val dedupKey = "${amount}_${packageName}_$minuteTimestamp"
+        // 去重：1小时内相同金额 + 相同包名 + 相似文本只处理一次
+        // 唯一键 = 金额_包名_文本前50字符（避免同一通知被系统重新投递时重复记录）
+        val textSignature = text.take(50).replace(" ", "")
+        val dedupKey = "${amount}_${packageName}_${textSignature.hashCode()}"
         synchronized(recentDetections) {
             val lastTime = recentDetections[dedupKey]
             if (lastTime != null && System.currentTimeMillis() - lastTime < DEDUP_WINDOW_MS) {
@@ -116,6 +118,26 @@ object PaymentDetector {
                         categoryName = "其他"
                     }
                     confidence = minOf(confidence, 75)  // 降低置信度，标记为待确认
+                }
+
+                // 出行/打车 app 的支付不可能是红包/退款收入
+                // 高德/滴滴等 app 通知常含"领红包"营销文案，需排除
+                val rideHailingApps = setOf(
+                    "com.autonavi.minimap",       // 高德地图
+                    "com.baidu.BaiduMap",         // 百度地图
+                    "com.didiglobal.passenger",   // 滴滴出行
+                    "com.didi.global",            // 滴滴出行（国际版）
+                    "com.sdu.didi.psnger",        // 滴滴出行（国内新版）
+                    "com.hellobike",              // 哈啰出行
+                    "com.meituan.taxi",           // 美团打车
+                )
+                if (packageName in rideHailingApps && type == 1) {
+                    Log.d(TAG, "出行app收入修正: 收入→支出 (出行app支付不可能是红包/退款)")
+                    type = 0  // 修正为支出
+                    if (categoryName == "红包" || categoryName == "退款" || categoryName == "中奖") {
+                        categoryName = "交通"
+                    }
+                    confidence = minOf(confidence, 75)
                 }
 
                 // 基于包名的场景推断：修正分类
@@ -187,7 +209,7 @@ object PaymentDetector {
                             amount = parsedAmount.toCents(),
                             categoryId = category.id,
                             note = "$notePrefix·$categoryName",
-                            date = System.currentTimeMillis(),
+                            date = detectedTime,  // 使用检测到的时间（通知时间/短信时间）
                             isPendingConfirm = isPending,
                             confidence = confidence,
                             isReimbursable = isReimbursable,
@@ -206,7 +228,7 @@ object PaymentDetector {
                                 amount = parsedAmount.toCents(),
                                 categoryId = fallbackCategory.id,
                                 note = "支出·待分类",
-                                date = System.currentTimeMillis(),
+                                date = detectedTime,  // 使用检测到的时间
                                 isPendingConfirm = true,
                                 confidence = 30,
                                 isReimbursable = false,
@@ -372,13 +394,14 @@ object PaymentDetector {
         "com.sina.weibo",       // 微博
     )
 
-    /** 聊天类 app 必须包含的支付确认关键词（二选一） */
+    /** 聊天类 app 必须包含的支付确认关键词 */
     private val CHAT_APP_PAYMENT_CONFIRM = listOf(
-        "微信支付", "微信转账", "收款到账", "零钱到账",
-        "支付成功", "付款成功", "转账成功", "退款到账",
-        "已支付", "已付款", "已转账", "已退款",
+        "微信支付", "微信转账", "零钱到账",
+        "支付成功", "付款成功", "转账成功",
         "商户消费", "扫码支付", "付款码",
         "QQ钱包", "QQ支付",
+        // 注意：移除了"退款到账"、"已退款"、"收款到账"、"已支付"、"已付款"、"已转账"
+        // 这些词在聊天消息中太常见，会导致误识别
     )
 
     /**
@@ -442,22 +465,45 @@ object PaymentDetector {
     /**
      * 聊天类 app 的严格过滤
      * 微信/QQ 的通知可能是聊天消息，必须包含明确的支付确认词才处理
+     *
+     * 额外规则：
+     * - 微信/QQ 通知的标题通常是联系人名，文本是消息内容
+     * - 如果标题是"微信支付"等官方账号 → 直接通过
+     * - 聊天消息中提到"退款"/"红包"/"兼职"等不应触发记账
+     * - 聊天消息中提到"工资"/"报销"等也不应触发记账
+     *
+     * @param packageName 来源包名
+     * @param text 通知全文
+     * @param title 通知标题（可选，用于更精确过滤）
      * @return true 表示该通知应该被处理
      */
-    fun shouldProcessFromChatApp(packageName: String, text: String): Boolean {
-        // 优先从 RuleManager 加载规则
-        val ruleChatApps = RuleManager.getChatAppPackages()
-        val ruleConfirmWords = RuleManager.getChatAppPaymentConfirm()
+    fun shouldProcessFromChatApp(packageName: String, text: String, title: String? = null): Boolean {
+        // 非聊天类 app 走普通过滤
+        if (packageName !in CHAT_APP_PACKAGES) return true
 
-        if (ruleChatApps.isNotEmpty()) {
-            // 使用动态规则
-            if (packageName !in ruleChatApps) return true
-            return ruleConfirmWords.any { text.contains(it) }
+        // 规则1：通知标题是官方支付账号 → 直接通过
+        val officialAccounts = setOf(
+            "微信支付", "微信转账", "支付宝", "支付宝通知",
+            "QQ钱包", "QQ支付", "云闪付",
+        )
+        if (title != null && officialAccounts.any { title.contains(it) }) return true
+
+        // 规则2：文本包含支付确认词 → 通过
+        if (CHAT_APP_PAYMENT_CONFIRM.any { text.contains(it) }) return true
+
+        // 规则3：聊天消息中的收入关键词不应触发记账
+        // 朋友说"我退款了"/"收到红包"/"兼职赚了100" → 不应记账
+        val chatMessageIncomeKeywords = listOf(
+            "退款", "红包", "兼职", "工资", "报销",
+            "奖金", "提成", "返现", "中奖", "彩票",
+            "收入", "到账", "入账",
+        )
+        if (chatMessageIncomeKeywords.any { text.contains(it) }) {
+            Log.d(TAG, "聊天消息包含收入关键词但缺少支付确认词，跳过: ${text.take(50)}")
+            return false
         }
 
-        // 回退到硬编码规则
-        if (packageName !in CHAT_APP_PACKAGES) return true
-        return CHAT_APP_PAYMENT_CONFIRM.any { text.contains(it) }
+        return false
     }
 
     /**
