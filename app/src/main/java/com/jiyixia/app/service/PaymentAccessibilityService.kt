@@ -122,7 +122,17 @@ class PaymentAccessibilityService : AccessibilityService() {
             val allText = collectTextFromNode(rootNode)
             if (allText.isBlank()) return
 
-            if (BuildConfig.DEBUG) Log.d(TAG, "屏幕文本: pkg=$packageName, text=${allText.take(200)}")
+            // 详细日志：记录检测到的文本和关键词匹配情况
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "屏幕文本: pkg=$packageName, text=${allText.take(300)}")
+                val hasPaymentSuccess = PAYMENT_SUCCESS_KEYWORDS.any { allText.contains(it) }
+                val hasTransferKeyword = TRANSFER_KEYWORDS.any { allText.contains(it) }
+                Log.d(TAG, "关键词匹配: paymentSuccess=$hasPaymentSuccess, transfer=$hasTransferKeyword")
+                if (hasPaymentSuccess || hasTransferKeyword) {
+                    val matchedKeywords = (PAYMENT_SUCCESS_KEYWORDS + TRANSFER_KEYWORDS).filter { allText.contains(it) }
+                    Log.d(TAG, "匹配到的关键词: $matchedKeywords")
+                }
+            }
 
             // 检查是否包含支付成功关键词（严格过滤，避免误识别）
             val hasPaymentSuccess = PAYMENT_SUCCESS_KEYWORDS.any { allText.contains(it) }
