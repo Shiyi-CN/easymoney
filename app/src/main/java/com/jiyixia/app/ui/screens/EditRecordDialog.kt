@@ -247,6 +247,19 @@ fun EditRecordDialog(
                         if (finalReimbursable && finalTarget.isNotBlank()) {
                             UserLearningManager.saveReimburseTarget(context, finalTarget)
                         }
+
+                        // 学习分类映射：如果用户修改了分类，记住这个映射
+                        if (record.categoryId != selectedCategoryId) {
+                            val categoryName = categories.find { it.id == selectedCategoryId }?.name
+                            if (categoryName != null && noteText.isNotBlank()) {
+                                // 使用备注的前20个字符作为商户名称的近似值
+                                val merchantKey = noteText.take(20).trim()
+                                if (merchantKey.isNotBlank()) {
+                                    UserLearningManager.learn(context, merchantKey, categoryName)
+                                }
+                            }
+                        }
+
                         onSave(updatedRecord)
                     }
                 }
