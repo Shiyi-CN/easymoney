@@ -55,6 +55,14 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.10"
     }
+
+    testOptions {
+        unitTests {
+            // android.util.Log 等 android 框架方法在单元测试中默认抛 RuntimeException("Stub!")
+            // 设置为 true 后返回默认值（0/false/null），使依赖 Log 的代码可在 JVM 单元测试中运行
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {

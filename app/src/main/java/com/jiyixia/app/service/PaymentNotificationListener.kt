@@ -1,6 +1,5 @@
 package com.jiyixia.app.service
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -11,15 +10,20 @@ import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
-import com.jiyixia.app.BuildConfig
 import androidx.core.app.NotificationCompat
+import com.jiyixia.app.BuildConfig
 import com.jiyixia.app.ui.MainActivity
 
 /**
- * 通知监听服务（Layer 1）
+ * 通知监听服务（Layer 1 - 重构版）
  *
- * 监听支付 app 的通知，提取交易信息后委托给 PaymentDetector 统一处理。
- * 与 PaymentAccessibilityService（Layer 2）共享 PaymentDetector 的去重和记录逻辑。
+ * 改进点：
+ * 1. 使用 PaymentDetector.processNotification 统一入口
+ * 2. 移除本地关键词过滤和金额提取（由 NotificationParser 处理）
+ * 3. 只负责：接收通知 → 过滤支付 app → 委托给 PaymentDetector
+ *
+ * 与 PaymentAccessibilityService（Layer 2）和 SmsReceiver（Layer 3）共享
+ * PaymentDetector 的去重和记录逻辑。
  */
 class PaymentNotificationListener : NotificationListenerService() {
 
@@ -28,7 +32,6 @@ class PaymentNotificationListener : NotificationListenerService() {
         private const val CHANNEL_ID = "payment_monitor"
         private const val FOREGROUND_ID = 1
 
-        // 服务连接状态
         @Volatile
         var isServiceConnected = false
             private set
@@ -44,77 +47,23 @@ class PaymentNotificationListener : NotificationListenerService() {
         if (!PaymentDetector.isPaymentApp(packageName)) return
 
         val notification = sbn.notification ?: return
-        val allText = extractAllText(notification)
-        val title = extractTitle(notification)
 
-        if (BuildConfig.DEBUG) Log.d(TAG, "收到通知: pkg=$packageName, title=$title, text=$allText")
-
-        if (allText.isBlank()) return
-
-        // 检查是否包含支付相关关键词（避免误识别普通聊天消息）
-        if (!PaymentDetector.containsPaymentKeyword(allText)) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "无支付关键词，跳过")
-            return
-        }
-
-        // 聊天类 app（微信/QQ）严格过滤：必须包含支付确认词才处理
-        // 传入标题，用于识别官方支付账号通知
-        if (!PaymentDetector.shouldProcessFromChatApp(packageName, allText, title)) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "聊天类app通知缺少支付确认词，跳过")
-            return
-        }
-
-        // 提取金额
-        val amount = PaymentDetector.extractAmount(allText)
-        if (amount == null || amount <= 0) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "无法解析金额，跳过")
-            return
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "收到通知: pkg=$packageName")
         }
 
         // 提取通知时间（优先使用通知时间，作为支付时间的参考）
-        val notificationTime = sbn.notification?.`when`?.takeIf { it > 0 } ?: System.currentTimeMillis()
+        val notificationTime = notification.`when`?.takeIf { it > 0 }
+            ?: System.currentTimeMillis()
 
-        // 委托给统一检测入口
-        PaymentDetector.processDetection(
-            source = "通知",
-            amount = amount,
-            text = allText,
+        // 委托给 PaymentDetector 统一处理
+        // （内部会做：结构化解析 → 营销过滤 → 去重 → 场景识别 → 记录）
+        PaymentDetector.processNotification(
+            notification = notification,
             packageName = packageName,
             context = applicationContext,
             detectedTime = notificationTime
         )
-    }
-
-    /** 提取通知标题（用于识别微信支付等官方账号） */
-    private fun extractTitle(notification: Notification): String? {
-        val extras = notification.extras ?: return null
-        return extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
-    }
-
-    /** 全面提取通知文本（兼容微信/支付宝各种格式） */
-    private fun extractAllText(notification: Notification): String {
-        val extras = notification.extras ?: return ""
-        val sb = StringBuilder()
-
-        // 标题
-        extras.getCharSequence(Notification.EXTRA_TITLE)?.let { sb.append(it).append(" ") }
-        // 副标题
-        extras.getCharSequence(Notification.EXTRA_TITLE_BIG)?.let { sb.append(it).append(" ") }
-        // 主文本
-        extras.getCharSequence(Notification.EXTRA_TEXT)?.let { sb.append(it).append(" ") }
-        // 大文本（微信支付详情常在这里）
-        extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.let { sb.append(it).append(" ") }
-        // 摘要
-        extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.let { sb.append(it).append(" ") }
-        // 子文本
-        extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.let { sb.append(it).append(" ") }
-        // 文本行（多行通知）
-        @Suppress("DEPRECATION")
-        extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.let { lines ->
-            lines.forEach { sb.append(it).append(" ") }
-        }
-
-        return sb.toString().trim()
     }
 
     // ===== 前台服务保活 =====

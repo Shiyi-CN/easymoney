@@ -3,22 +3,21 @@ package com.jiyixia.app.service
 import android.accessibilityservice.AccessibilityService
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import com.jiyixia.app.BuildConfig
 
 /**
- * 无障碍支付检测服务
+ * 无障碍支付检测服务（重构版）
  *
- * 通过 AccessibilityService 监听支付页面的内容变化，
- * 提取交易金额和分类信息，实现屏幕级支付检测。
+ * 改进点：
+ * 1. 页面停留检测：支付成功页需稳定 3 秒才触发，避免滑过页面误触发
+ * 2. 节流延长到 5 秒：避免同一页面多次触发
+ * 3. 使用 ScreenParser 结构化解析：节点深度限制 + 文本过滤
+ * 4. 委托给 PaymentDetector 统一处理：共享去重和分类逻辑
  *
  * 隐私保护：
  * - 只处理支付相关 app 的事件（通过包名过滤）
- * - 只在检测到支付关键词时读取内容
- * - 只提取金额和分类关键词，不提取收款人/卡号等敏感信息
+ * - 只在检测到支付成功关键词时读取内容
  * - 处理完立即丢弃原始节点信息
- *
- * 默认关闭，用户需在设置页面手动开启并授权。
  */
 class PaymentAccessibilityService : AccessibilityService() {
 
@@ -29,38 +28,19 @@ class PaymentAccessibilityService : AccessibilityService() {
         var isServiceEnabled = false
             private set
 
-        // 事件节流：同一包名 2 秒内只处理一次内容变化事件
+        // 事件节流：同一包名 5 秒内只处理一次内容变化事件
+        // （从 2 秒延长到 5 秒，避免支付成功页动画多次触发）
+        private const val THROTTLE_MS = 5_000L
+
+        // 页面停留检测：检测到支付成功页后，等待 3 秒再次确认
+        // 避免用户只是滑过支付页面就触发记录
+        private const val STABLE_CHECK_DELAY_MS = 3_000L
+
+        // 记录每个包名上次处理时间
         private var lastProcessTime = mutableMapOf<String, Long>()
-        private const val THROTTLE_MS = 2_000L
 
-        // 支付成功页面的特征关键词
-        private val PAYMENT_SUCCESS_KEYWORDS = listOf(
-            "支付成功", "付款成功", "转账成功", "交易成功", "购买成功",
-            "支付完成", "付款完成", "转账完成", "交易完成",
-            "已支付", "已付款", "已转账", "已扣款",
-            "支付¥", "支付￥", "付款¥", "付款￥",
-            "确认支付", "确认付款",
-            // 打车/出行场景
-            "行程费用", "车费支付", "已支付车费", "支付车费",
-            "行程支付", "打车费用", "出行费用", "车费已付",
-            "支付行程", "行程已支付", "费用已支付",
-        )
-
-        // 银行/转账确认页特征（必须是"已完成"的确认页，不能是输入页）
-        private val TRANSFER_KEYWORDS = listOf(
-            "转账成功", "汇款成功", "转入成功",
-            "交易详情", "扣款通知", "消费通知",
-            // 打车/出行转账
-            "行程详情", "订单详情", "出行账单",
-        )
-
-        /** 转账输入页面的特征关键词（有这些词但没有"成功"等确认词 = 输入页） */
-        private val INPUT_PAGE_KEYWORDS = listOf(
-            "转账给", "向", "付款给", "转账金额",
-            "确认转账", "确认付款", "确认支付",
-            "输入金额", "输入密码", "请输入",
-            "选择付款方式", "选择到账方式",
-        )
+        // 记录待确认的支付页面：packageName → 首次检测时间
+        private var pendingPaymentPages = mutableMapOf<String, Long>()
     }
 
     override fun onServiceConnected() {
@@ -83,15 +63,15 @@ class PaymentAccessibilityService : AccessibilityService() {
         // 严格过滤：只处理支付相关 app
         if (!PaymentDetector.isPaymentApp(packageName)) return
 
-        // 只处理窗口状态变化和内容变化事件
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                // 页面切换，重置节流
+                // 页面切换，重置节流和待确认状态
                 lastProcessTime.remove(packageName)
+                pendingPaymentPages.remove(packageName)
                 if (BuildConfig.DEBUG) Log.d(TAG, "页面切换: pkg=$packageName")
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                // 节流：同一包名 2 秒内只处理一次
+                // 节流：同一包名 5 秒内只处理一次
                 val now = System.currentTimeMillis()
                 val lastTime = lastProcessTime[packageName] ?: 0
                 if (now - lastTime < THROTTLE_MS) return
@@ -109,96 +89,85 @@ class PaymentAccessibilityService : AccessibilityService() {
     /**
      * 处理当前屏幕内容
      *
-     * 1. 从根节点提取所有可见文本
-     * 2. 检查是否包含支付成功关键词
-     * 3. 提取金额
-     * 4. 调用 PaymentDetector 统一处理
+     * 采用"页面停留检测"策略：
+     * 1. 首次检测到支付成功关键词 → 记录为"待确认"，3 秒后再次检查
+     * 2. 3 秒后仍在同一页面 → 确认为真实支付场景，触发记录
+     * 3. 3 秒内页面切换 → 取消，避免误触发
+     *
+     * 这样可以避免：
+     * - 用户滑过支付页面就触发记录
+     * - 页面动画/倒计时多次触发
      */
     private fun processCurrentScreen(packageName: String) {
         val rootNode = rootInActiveWindow ?: return
 
         try {
-            // 提取所有可见文本
-            val allText = collectTextFromNode(rootNode)
+            // 使用 ScreenParser 结构化解析（带深度限制和文本过滤）
+            val content = ScreenParser.parse(rootNode, packageName)
+            val allText = content.allText
+
             if (allText.isBlank()) return
 
-            // 详细日志：记录检测到的文本和关键词匹配情况
             if (BuildConfig.DEBUG) {
-                Log.d(TAG, "屏幕文本: pkg=$packageName, text=${allText.take(300)}")
-                val hasPaymentSuccess = PAYMENT_SUCCESS_KEYWORDS.any { allText.contains(it) }
-                val hasTransferKeyword = TRANSFER_KEYWORDS.any { allText.contains(it) }
-                Log.d(TAG, "关键词匹配: paymentSuccess=$hasPaymentSuccess, transfer=$hasTransferKeyword")
-                if (hasPaymentSuccess || hasTransferKeyword) {
-                    val matchedKeywords = (PAYMENT_SUCCESS_KEYWORDS + TRANSFER_KEYWORDS).filter { allText.contains(it) }
-                    Log.d(TAG, "匹配到的关键词: $matchedKeywords")
+                Log.d(TAG, "屏幕文本: pkg=$packageName, text=${allText.take(200)}")
+            }
+
+            // 快速预检：必须包含支付成功关键词才继续
+            // （避免每个内容变化都做完整解析）
+            val paymentSuccessKeywords = listOf(
+                "支付成功", "付款成功", "转账成功", "交易成功", "购买成功",
+                "支付完成", "付款完成", "转账完成", "交易完成",
+                "已支付", "已付款", "已扣款"
+            )
+            val hasPaymentSuccess = paymentSuccessKeywords.any { allText.contains(it) }
+            if (!hasPaymentSuccess) return
+
+            // 页面停留检测
+            val now = System.currentTimeMillis()
+            val pendingTime = pendingPaymentPages[packageName]
+
+            if (pendingTime == null) {
+                // 首次检测到支付成功页，记录为待确认
+                pendingPaymentPages[packageName] = now
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "检测到支付成功页，等待 ${STABLE_CHECK_DELAY_MS}ms 确认: pkg=$packageName")
                 }
-            }
-
-            // 检查是否包含支付成功关键词（严格过滤，避免误识别）
-            val hasPaymentSuccess = PAYMENT_SUCCESS_KEYWORDS.any { allText.contains(it) }
-            val hasTransferKeyword = TRANSFER_KEYWORDS.any { allText.contains(it) }
-
-            // 必须有支付成功或转账确认关键词，否则跳过
-            if (!hasPaymentSuccess && !hasTransferKeyword) return
-
-            // 额外过滤：排除转账输入界面
-            // 输入界面特征：有"转账给"/"确认转账"等词，但没有"成功"/"完成"/"已支付"等确认词
-            val hasConfirmWord = allText.contains("成功") || allText.contains("完成") ||
-                    allText.contains("已支付") || allText.contains("已付款") ||
-                    allText.contains("已扣款") || allText.contains("已转账")
-            val isInputPage = INPUT_PAGE_KEYWORDS.any { allText.contains(it) } && !hasConfirmWord
-            if (isInputPage) {
-                if (BuildConfig.DEBUG) Log.d(TAG, "检测到转账输入界面，跳过")
                 return
             }
 
-            // 提取金额
-            val amount = PaymentDetector.extractAmount(allText)
-            if (amount == null || amount <= 0) {
-                if (BuildConfig.DEBUG) Log.d(TAG, "检测到支付页面但无法提取金额")
+            // 已在待确认状态，检查是否超过稳定时间
+            val dwellTime = now - pendingTime
+            if (dwellTime < STABLE_CHECK_DELAY_MS) {
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "支付页停留 ${dwellTime}ms，未达 ${STABLE_CHECK_DELAY_MS}ms，继续等待")
+                }
                 return
             }
 
-            if (BuildConfig.DEBUG) Log.d(TAG, "屏幕检测到支付: pkg=$packageName, amount=$amount")
+            // 停留时间足够，确认为真实支付场景
+            // 清除待确认状态，避免重复触发
+            pendingPaymentPages.remove(packageName)
 
-            // 调用统一检测入口
-            PaymentDetector.processDetection(
-                source = "屏幕",
-                amount = amount,
-                text = allText,
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "支付页确认，触发检测: pkg=$packageName, dwell=${dwellTime}ms")
+            }
+
+            // 委托给 PaymentDetector 处理（包含结构化解析、去重、场景识别）
+            PaymentDetector.processScreen(
+                rootNode = rootNode,
                 packageName = packageName,
                 context = applicationContext
             )
+
         } catch (e: Exception) {
             Log.e(TAG, "处理屏幕内容失败", e)
         } finally {
             // 立即丢弃节点信息，保护隐私
-            rootNode.recycle()
-        }
-    }
-
-    /**
-     * 递归收集节点中的所有文本
-     * 只提取文本内容，不提取节点 ID、描述等可能包含敏感信息的内容
-     */
-    private fun collectTextFromNode(node: AccessibilityNodeInfo): String {
-        val sb = StringBuilder()
-
-        // 只提取文本内容
-        node.text?.let { sb.append(it).append(" ") }
-        // contentDescription 可能包含有用信息（如"支付成功"）
-        node.contentDescription?.let { sb.append(it).append(" ") }
-
-        // 递归子节点
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
             try {
-                sb.append(collectTextFromNode(child))
-            } finally {
-                child.recycle()
+                rootNode.recycle()
+            } catch (_: Exception) {
+                // ignore recycle errors
             }
         }
-
-        return sb.toString()
     }
 }

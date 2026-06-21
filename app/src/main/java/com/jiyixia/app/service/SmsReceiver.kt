@@ -8,19 +8,15 @@ import android.util.Log
 import com.jiyixia.app.BuildConfig
 
 /**
- * 短信接收器
+ * 短信接收器（重构版）
  *
- * 监听短信广播，解析银行、支付类短信内容，
- * 提取金额、商户等信息，调用 PaymentDetector 统一处理。
- *
- * 支持的短信类型：
- * - 银行消费通知（招商银行、工商银行等）
- * - 支付宝/微信支付通知
- * - 退款通知
+ * 改进点：
+ * 1. 使用 PaymentDetector.processSms 统一入口
+ * 2. 移除本地关键词过滤和金额提取（由 NotificationParser 处理）
+ * 3. 只负责：接收短信 → 委托给 PaymentDetector
  *
  * 隐私保护：
- * - 只处理包含支付关键词的短信
- * - 只提取金额和分类关键词，不提取卡号等敏感信息
+ * - 只处理包含支付关键词的短信（在 PaymentDetector 内过滤）
  * - 处理完立即丢弃原始短信内容
  */
 class SmsReceiver : BroadcastReceiver() {
@@ -28,33 +24,12 @@ class SmsReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "SmsReceiver"
 
-        // 银行短信特征关键词
-        private val BANK_KEYWORDS = listOf(
-            "消费", "支出", "扣款", "转账", "还款",
-            "信用卡", "借记卡", "储蓄卡",
-            "招商银行", "工商银行", "建设银行", "农业银行",
-            "中国银行", "交通银行", "浦发银行", "平安银行",
-            "广发银行", "民生银行", "兴业银行", "光大银行",
-            "华夏银行", "北京银行", "邮储银行"
-        )
-
-        // 支付类短信特征关键词
-        private val PAYMENT_KEYWORDS = listOf(
-            "支付宝", "微信支付", "云闪付",
-            "消费", "支出", "扣款", "转账",
-            "退款", "到账", "收入"
-        )
-
-        // 金额提取正则（银行短信常见格式）
-        private val AMOUNT_PATTERNS = listOf(
-            // "消费人民币XXX元" / "支出XXX元"
-            Regex("""(?:消费|支出|扣款|转账|还款)[人民币]*[¥￥]?\s*([\d,.]+)\s*元"""),
-            // "人民币XXX元"
-            Regex("""人民币\s*[¥￥]?\s*([\d,.]+)\s*元"""),
-            // "XXX元"
-            Regex("""[¥￥]?\s*([\d,.]+)\s*元"""),
-            // "金额XXX"
-            Regex("""金额[：:]\s*[¥￥]?\s*([\d,.]+)"""),
+        // 银行短信发送方号码前缀（用于快速过滤）
+        // 非银行发送方的短信直接跳过，减少不必要的解析
+        private val BANK_SENDER_PREFIXES = listOf(
+            "95588", "95533", "95566", "95599", "95558", "95568", "95501",
+            "95595", "95577", "95508", "95559", "95561", "95555", "95528",
+            "95588", "95511", "95577", "95590"
         )
     }
 
@@ -72,58 +47,26 @@ class SmsReceiver : BroadcastReceiver() {
                 Log.d(TAG, "收到短信: sender=$sender, body=${body.take(100)}")
             }
 
-            // 过滤：只处理包含支付关键词的短信
-            if (!containsPaymentKeyword(body)) {
-                if (BuildConfig.DEBUG) Log.d(TAG, "无支付关键词，跳过")
+            // 快速预过滤：只处理银行发送方的短信
+            // （非银行短信几乎不可能是支付通知）
+            val isBankSender = BANK_SENDER_PREFIXES.any { sender.contains(it) }
+            if (!isBankSender) {
+                if (BuildConfig.DEBUG) Log.d(TAG, "非银行发送方，跳过: $sender")
                 continue
             }
-
-            // 提取金额
-            val amount = extractAmount(body)
-            if (amount == null || amount <= 0) {
-                if (BuildConfig.DEBUG) Log.d(TAG, "无法解析金额，跳过")
-                continue
-            }
-
-            if (BuildConfig.DEBUG) Log.d(TAG, "短信检测到支付: sender=$sender, amount=$amount")
 
             // 使用短信时间戳作为支付时间的参考
-            val smsTime = message.timestampMillis?.takeIf { it > 0 } ?: System.currentTimeMillis()
+            val smsTime = message.timestampMillis?.takeIf { it > 0 }
+                ?: System.currentTimeMillis()
 
-            // 调用统一检测入口
-            PaymentDetector.processDetection(
-                source = "短信",
-                amount = amount,
-                text = body,
-                packageName = "sms:$sender",
+            // 委托给 PaymentDetector 统一处理
+            // （内部会做：结构化解析 → 营销过滤 → 去重 → 场景识别 → 记录）
+            PaymentDetector.processSms(
+                sender = sender,
+                body = body,
                 context = context,
                 detectedTime = smsTime
             )
         }
-    }
-
-    /**
-     * 检查文本是否包含支付关键词
-     */
-    private fun containsPaymentKeyword(text: String): Boolean {
-        return BANK_KEYWORDS.any { text.contains(it) } ||
-               PAYMENT_KEYWORDS.any { text.contains(it) }
-    }
-
-    /**
-     * 从短信文本中提取金额
-     */
-    private fun extractAmount(text: String): Double? {
-        for (pattern in AMOUNT_PATTERNS) {
-            val match = pattern.find(text)
-            if (match != null) {
-                val amountStr = match.groupValues[1].replace(",", "").replace(" ", "")
-                val amount = amountStr.toDoubleOrNull()
-                if (amount != null && amount > 0 && amount < 1000000) {
-                    return amount
-                }
-            }
-        }
-        return null
     }
 }
