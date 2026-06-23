@@ -1,6 +1,9 @@
 package com.jiyixia.app.ui.screens
 
 import android.app.Application
+import android.content.ComponentName
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -43,6 +46,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jiyixia.app.data.entity.Category
 import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.data.ThemePreferences
+import com.jiyixia.app.service.PaymentNotificationListener
 import com.jiyixia.app.ui.theme.*
 import com.jiyixia.app.util.CategoryEmoji
 import com.jiyixia.app.util.toAmountString
@@ -58,6 +62,13 @@ import java.util.*
 // ── 格式化 ─────────────────────────────────────────────────────────────────────
 private val dateSdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 private val dispSdf = SimpleDateFormat("M月d日", Locale.getDefault())
+
+// 检测通知监听服务是否已在系统设置中授权
+private fun isNotificationListenerEnabled(context: android.content.Context): Boolean {
+    val cn = ComponentName(context, PaymentNotificationListener::class.java)
+    val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners") ?: return false
+    return flat.contains(cn.flattenToString())
+}
 
 private fun formatDateGroup(dateStr: String): String {
     return try {
@@ -104,6 +115,25 @@ fun HomeScreen(
 ) {
     val uiState by vm.uiState.collectAsState()
     val context = LocalContext.current
+
+    // 通知监听服务状态：用于在首页顶部显示"服务已断开"警告横幅
+    // 当用户已授权但服务被系统断开时（应用更新/被杀/系统重启等），
+    // requestRebind 在国产 ROM 上经常不生效，必须引导用户去系统设置关闭再打开权限。
+    var listenerAuthorized by remember { mutableStateOf(isNotificationListenerEnabled(context)) }
+    var listenerConnected by remember { mutableStateOf(PaymentNotificationListener.isServiceConnected) }
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                listenerAuthorized = isNotificationListenerEnabled(context)
+                listenerConnected = PaymentNotificationListener.isServiceConnected
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // 是否需要显示服务断开警告（已授权但未连接）
+    val showListenerDisconnectedBanner = listenerAuthorized && !listenerConnected
 
     // 编辑记录状态
     var editingRecord by remember { mutableStateOf<Record?>(null) }
@@ -210,6 +240,17 @@ fun HomeScreen(
             }
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
+            // ── 服务断开警告横幅 - 顶部最醒目位置
+            // 当通知监听已授权但服务被系统断开时显示，引导用户去系统设置关闭再打开权限
+            if (showListenerDisconnectedBanner) {
+                ServiceDisconnectedBanner(
+                    onClick = {
+                        val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                        context.startActivity(intent)
+                    }
+                )
+            }
+
             // ── 月度概览卡 - 顶格显示
             MonthOverviewCard(
                 income = uiState.monthIncome,
@@ -569,6 +610,42 @@ private fun MonthOverviewCard(
                 }
             }
         }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  服务断开警告 Banner
+//  当通知监听已授权但服务被系统断开时显示，引导用户去系统设置关闭再打开权限
+// ══════════════════════════════════════════════════════════════════════════════
+@Composable
+private fun ServiceDisconnectedBanner(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(ExpenseRed.copy(alpha = 0.12f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("⚠️", fontSize = 16.sp)
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "自动记账已停止",
+                color = ExpenseRed,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "点击前往系统设置，关闭再打开通知访问权限",
+                color = ExpenseRed.copy(alpha = 0.8f),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 1.dp)
+            )
+        }
+        Text("去修复 →", color = ExpenseRed, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
 

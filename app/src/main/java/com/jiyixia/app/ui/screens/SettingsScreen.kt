@@ -183,7 +183,7 @@ fun SettingsScreen(
                 title = "通知监听",
                 desc = when {
                     !listenerEnabled -> "未开启，请点击右侧开关授权"
-                    !serviceConnected -> "已授权，服务未连接（重启App试试）"
+                    !serviceConnected -> "服务已断开，请点击开关前往系统设置，关闭再打开通知访问权限"
                     !hasNotificationPermission -> "通知权限未授予，可能收不到推送"
                     else -> "正在监听支付宝 / 微信支付通知"
                 },
@@ -208,7 +208,7 @@ fun SettingsScreen(
                 title = "屏幕检测",
                 desc = when {
                     !a11yEnabled -> "未开启，可检测银行等无通知的支付页面"
-                    !a11yRunning -> "已授权，服务未启动（重启App试试）"
+                    !a11yRunning -> "服务未启动，请点击开关前往系统设置，关闭再打开无障碍服务"
                     else -> "正在检测支付页面（补充通知监听）"
                 },
                 titleColor = if (a11yEnabled && a11yRunning)

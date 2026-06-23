@@ -81,10 +81,23 @@ class PaymentNotificationListener : NotificationListenerService() {
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         isServiceConnected = false
-        Log.d(TAG, "通知监听服务已断开，尝试重新连接...")
+        Log.w(TAG, "通知监听服务已断开，尝试重新连接...")
 
-        // 尝试重新绑定（小米等国产ROM需要）
-        requestRebind(ComponentName(this, PaymentNotificationListener::class.java))
+        // 1. 尝试 requestRebind 重新绑定（Android 原生 API）
+        // 注意：在国产 ROM（小米/华为/OPPO/vivo）和 Android 12+ 上经常不生效，
+        // 因此还需要启动保活服务，并依赖用户在系统设置里关闭再打开权限来恢复。
+        try {
+            requestRebind(ComponentName(this, PaymentNotificationListener::class.java))
+        } catch (e: Exception) {
+            Log.e(TAG, "requestRebind 失败", e)
+        }
+
+        // 2. 启动保活服务，维持进程存活（间接帮助后续重连）
+        try {
+            KeepAliveService.start(this)
+        } catch (e: Exception) {
+            Log.e(TAG, "启动保活服务失败", e)
+        }
     }
 
     private fun startForeground() {
