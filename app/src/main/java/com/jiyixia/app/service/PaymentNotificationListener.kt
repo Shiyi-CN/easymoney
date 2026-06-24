@@ -83,20 +83,17 @@ class PaymentNotificationListener : NotificationListenerService() {
         isServiceConnected = false
         Log.w(TAG, "通知监听服务已断开，尝试重新连接...")
 
-        // 1. 尝试 requestRebind 重新绑定（Android 原生 API）
+        // 尝试 requestRebind 重新绑定（Android 原生 API）
         // 注意：在国产 ROM（小米/华为/OPPO/vivo）和 Android 12+ 上经常不生效，
-        // 因此还需要启动保活服务，并依赖用户在系统设置里关闭再打开权限来恢复。
+        // 需要依赖用户在系统设置里关闭再打开权限来恢复（首页会有警告横幅引导）。
+        // 不要在这里启动 KeepAliveService：onListenerDisconnected 被调用时 App 大概率
+        // 在后台，Android 12+ 会拒绝后台启动前台服务，KeepAliveService.startForeground()
+        // 抛出 ForegroundServiceStartNotAllowedException 会导致服务崩溃，进而触发系统
+        // 更积极地杀掉 App 进程，形成"断连→崩溃→进程被杀→再次断连"的恶性循环。
         try {
             requestRebind(ComponentName(this, PaymentNotificationListener::class.java))
         } catch (e: Exception) {
             Log.e(TAG, "requestRebind 失败", e)
-        }
-
-        // 2. 启动保活服务，维持进程存活（间接帮助后续重连）
-        try {
-            KeepAliveService.start(this)
-        } catch (e: Exception) {
-            Log.e(TAG, "启动保活服务失败", e)
         }
     }
 

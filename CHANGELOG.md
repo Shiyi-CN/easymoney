@@ -1,5 +1,15 @@
 # 记一下 - 更新日志
 
+## v1.3.10 (2026-06-24) —— 修复 v1.3.9 引入的自动记账失效回归
+
+### 🚨 紧急回归修复
+- **问题现象**：升级到 v1.3.9 后，自动记账完全失效，用户需要反复去系统设置关闭再打开通知访问权限才能短暂恢复，很快又失效。
+- **根因**：v1.3.9 在 `onListenerDisconnected` 中新增了 `KeepAliveService.start(this)` 调用。该回调被触发时 App 大概率在后台，Android 12+ 会拒绝后台启动前台服务，`KeepAliveService.startForeground()` 抛出 `ForegroundServiceStartNotAllowedException` 导致服务崩溃。崩溃触发系统更积极地杀掉 App 进程，进程被杀又导致 `NotificationListenerService` 再次断连，形成「断连→崩溃→进程被杀→再次断连」的恶性循环。
+- **修复**：移除 `onListenerDisconnected` 中的 `KeepAliveService.start(this)` 调用。`onListenerConnected` 中已经启动保活服务，断连时再启动既无意义又会触发后台启动限制。保留 `requestRebind` 尝试和首页警告横幅引导。
+- **影响范围**：仅回退 v1.3.9 中引入问题的那一行代码，v1.3.9 的其他改进（首页警告横幅、设置页文案修正）保留。
+
+---
+
 ## v1.3.9 (2026-06-23) —— 自动记账断连修复
 
 ### 🔔 自动记账断连问题修复
