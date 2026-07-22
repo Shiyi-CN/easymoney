@@ -18,7 +18,7 @@ import android.util.Log
  * 1. 提取 title / subText / text / bigText / textLines 分别保存
  * 2. 识别通知模板（微信支付/支付宝/银行）
  * 3. 从对应模板的字段提取金额和商户名
- * 4. 拒绝营销通知（含"优惠券"、"红包"、"活动"等词）
+ * 4. 拒绝营销通知（含"优惠券"、"红包雨"、"活动"等词，但有退款/消费例外）
  */
 object NotificationParser {
 
@@ -49,13 +49,33 @@ object NotificationParser {
         val content: NotificationContent // 原始结构化内容
     )
 
-    /** 营销通知特征词（出现这些词应拒绝识别） */
+    /**
+     * 营销通知特征词（出现这些词应拒绝识别）
+     *
+     * 注意：以下词在真实消费通知中也可能出现（如"使用红包抵扣"、"满减活动"），
+     * 因此 isMarketing() 会结合支付确认词做例外判断。
+     */
     private val MARKETING_KEYWORDS = listOf(
         "优惠券", "折扣", "满减", "满赠", "限时", "抢购", "特惠", "特价",
         "活动", "促销", "打折", "秒杀", "领红包", "抢红包", "红包雨",
-        "积分兑换", "签到", "抽奖", "中奖", "免费领", "0元购", "0元领",
-        "为你推荐", "猜你喜欢", "热门活动", "立即查看",
-        "余额宝收益", "基金推荐", "理财产品", "保险推荐"
+        "积分兑换", "积分清零", "签到", "抽奖", "中奖", "免费领", "0元购", "0元领",
+        "为你推荐", "猜你喜欢", "热门活动", "立即查看", "点击查看",
+        "余额宝收益", "基金推荐", "理财产品", "保险推荐",
+        "推广", "广告", "推荐有礼", "福利", "赠送"
+    )
+
+    /**
+     * 真实消费通知的支付确认词
+     *
+     * 如果通知同时包含营销词和支付确认词，优先按消费处理。
+     * 例如："使用红包抵扣，实付¥38.00" 应识别为消费，不是营销。
+     */
+    private val PAYMENT_CONFIRM_KEYWORDS = listOf(
+        "支付成功", "付款成功", "转账成功", "交易成功", "购买成功",
+        "支付完成", "付款完成", "转账完成", "交易完成",
+        "已支付", "已付款", "已扣款", "已转账",
+        "消费", "扣款", "支出", "付款", "支付",
+        "收款到账", "转账到账", "退款到账", "退款金额"
     )
 
     /** 微信支付通知模板特征 */
@@ -155,17 +175,33 @@ object NotificationParser {
     /**
      * 营销通知检测
      *
-     * 关键：营销通知通常包含"领红包"、"优惠券"等词，且金额往往很小（¥0.01、¥0.88）
-     * 但要注意：真正的"退款到账"也可能金额小，需要结合场景判断
+     * 关键改进：真实消费通知可能含"使用红包抵扣"、"满减活动"等词，
+     * 如果同时包含支付确认词（消费/支付/扣款/金额），则不视为营销。
+     *
+     * 营销通知的特征：
+     * - 含营销词（优惠券/红包雨/积分兑换等）
+     * - 不含支付确认词
+     * - 没有明确金额（或金额为 0.01/0.88 等极小值）
      */
     private fun isMarketing(content: NotificationContent): Boolean {
         val checkText = content.allText
 
-        // 明确的营销词
+        // 含营销词时，检查是否同时含支付确认词
         if (MARKETING_KEYWORDS.any { checkText.contains(it) }) {
-            // 例外：如果同时包含"退款到账"或"退货"，则不是营销
+            // 例外1：退款/退货场景，保留
             val isRefund = checkText.contains("退款") || checkText.contains("退货")
-            if (!isRefund) return true
+            if (isRefund) return false
+
+            // 例外2：同时含支付确认词 + 明确金额，视为消费（非营销）
+            // 例如："使用红包抵扣，实付¥38.00"
+            val hasPaymentConfirm = PAYMENT_CONFIRM_KEYWORDS.any { checkText.contains(it) }
+            val hasYenAmount = Regex("""[¥￥]\s*\d+\.\d{2}""").containsMatchIn(checkText)
+            if (hasPaymentConfirm && hasYenAmount) {
+                Log.d(TAG, "含营销词但有支付确认+金额，视为消费: ${checkText.take(60)}")
+                return false
+            }
+
+            return true
         }
 
         return false
@@ -189,7 +225,7 @@ object NotificationParser {
         val amount = extractAmountStrict(amountText) ?: return null
 
         // 从 bigText 提取商户名
-        val merchantName = extractMerchantFromWeChat(content.bigText)
+        val merchantName = extractMerchantFromWeChat(content.bigText, content.text)
 
         // 场景判断
         val scene = when {
@@ -213,7 +249,7 @@ object NotificationParser {
      *
      * 模板示例：
      * - title: "支付宝"
-     * - text: "在星巴克消费¥38.00"
+     * - text: "在星巴克消费¥38.00" 或 "星巴克 消费¥38.00"
      */
     private fun parseAlipay(content: NotificationContent): ParsedNotification? {
         val isOfficial = ALIPAY_TITLES.any { content.title.contains(it) }
@@ -223,7 +259,7 @@ object NotificationParser {
         val amountText = content.text.ifBlank { content.bigText }
         val amount = extractAmountStrict(amountText) ?: return null
 
-        // 从 text 提取商户名（"在XXX消费"、"XXX-付款"）
+        // 从 text 提取商户名（多种格式）
         val merchantName = extractMerchantFromAlipay(content.text, content.bigText)
 
         val scene = when {
@@ -281,12 +317,18 @@ object NotificationParser {
 
     /**
      * 通用通知解析（其他支付 app）
+     *
+     * 放宽确认词要求，支持美团/京东/滴滴等 app 的多种通知格式。
      */
     private fun parseGeneric(content: NotificationContent): ParsedNotification? {
-        // 必须包含支付确认词
+        // 必须包含支付确认词（放宽版）
         val hasPaymentConfirm = listOf(
-            "支付成功", "付款成功", "转账成功", "交易成功",
-            "已支付", "已付款", "消费成功", "扣款成功"
+            "支付成功", "付款成功", "转账成功", "交易成功", "购买成功", "下单成功",
+            "支付完成", "付款完成", "转账完成", "交易完成",
+            "已支付", "已付款", "已扣款", "已下单", "消费成功", "扣款成功",
+            "支付¥", "支付￥", "付款¥", "付款￥",
+            "行程费用", "车费支付", "已支付车费", "支付车费",
+            "费用已支付", "订单已支付"
         ).any { content.allText.contains(it) }
 
         if (!hasPaymentConfirm) return null
@@ -295,7 +337,8 @@ object NotificationParser {
 
         // 商户名通常在 title
         val merchantName = if (content.title.isNotBlank() &&
-            !content.title.contains("支付") && !content.title.contains("通知")) {
+            !content.title.contains("支付") && !content.title.contains("通知") &&
+            !content.title.contains("成功") && !content.title.contains("完成")) {
             content.title
         } else ""
 
@@ -309,31 +352,38 @@ object NotificationParser {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  严格金额提取（只提取明确的金额，避免营销文案误匹配）
+    //  严格金额提取（支持多种真实通知格式）
     // ═══════════════════════════════════════════════════════════
 
     /**
      * 严格金额提取
      *
-     * 与旧的 extractAmount 不同，这里只匹配明确的金额格式：
-     * 1. ¥/￥ 符号 + 数字（最可靠）
-     * 2. "金额：XXX" / "金额 XXX"
-     * 3. "消费/支出/扣款/转账/支付 + 数字 + 元"
+     * 改进点：
+     * 1. ¥/￥ 符号后取最大金额（避免"红包抵扣¥0.01，实付¥38.00"取到 0.01）
+     * 2. 支持"支付38.00"、"消费38"等无"元"后缀的格式（支付宝/微信常见）
+     * 3. 支持"实付¥38"、"实扣¥38"等动作词+¥组合
      *
      * 不匹配：
      * - 纯数字（容易匹配到订单号、时间等）
      * - "X元"（容易匹配到"满100元减50元"）
      */
     private fun extractAmountStrict(text: String): Double? {
-        // 优先级 1：¥/￥ 符号 + 数字（最可靠）
+        // 优先级 1：¥/￥ 符号 + 数字（取所有匹配中的最大值）
+        // 改进：原代码只取第一个匹配，如果"红包抵扣¥0.01"在"实付¥38.00"之前，会取到 0.01
         val yenPattern = Regex("""[¥￥]\s*(\d+(?:\.\d{1,2})?)""")
-        yenPattern.find(text)?.let { match ->
-            val amount = match.groupValues[1].toDoubleOrNull()
-            if (amount != null && amount > 0 && amount < 1_000_000) return amount
+        val yenMatches = yenPattern.findAll(text).mapNotNull { match ->
+            match.groupValues[1].toDoubleOrNull()
+        }.filter { it > 0 && it < 1_000_000 }.toList()
+
+        if (yenMatches.isNotEmpty()) {
+            // 取最大金额（实付 > 红包抵扣）
+            return yenMatches.max()
         }
 
-        // 优先级 2："金额：XXX" / "金额 XXX"
-        val amountLabelPattern = Regex("""金额[：:\s]*[¥￥]?\s*(\d+(?:\.\d{1,2})?)""")
+        // 优先级 2："金额：XXX" / "金额 XXX" / "实付¥XXX" / "实扣¥XXX"
+        val amountLabelPattern = Regex(
+            """(?:金额|实付|实扣|应付|已付|消费金额|支付金额|交易金额)[：:\s]*[¥￥]?\s*(\d+(?:\.\d{1,2})?)"""
+        )
         amountLabelPattern.find(text)?.let { match ->
             val amount = match.groupValues[1].toDoubleOrNull()
             if (amount != null && amount > 0 && amount < 1_000_000) return amount
@@ -355,6 +405,17 @@ object NotificationParser {
             if (amount != null && amount > 0 && amount < 1_000_000) return amount
         }
 
+        // 优先级 5：动作词 + 数字（无"元"后缀，支付宝/微信常见）
+        // 例如："在星巴克消费38.00"、"支付38"
+        // 注意：要求数字后跟小数点或非数字字符，避免匹配到订单号
+        val actionNoYuanPattern = Regex(
+            """(?:消费|支出|扣款|支付|付款)[^\d]{0,5}(\d+\.\d{1,2})"""
+        )
+        actionNoYuanPattern.find(text)?.let { match ->
+            val amount = match.groupValues[1].toDoubleOrNull()
+            if (amount != null && amount > 0 && amount < 1_000_000) return amount
+        }
+
         return null
     }
 
@@ -363,10 +424,11 @@ object NotificationParser {
     // ═══════════════════════════════════════════════════════════
 
     /** 微信支付 bigText 中的商户名提取 */
-    private fun extractMerchantFromWeChat(bigText: String): String {
-        if (bigText.isBlank()) return ""
+    private fun extractMerchantFromWeChat(bigText: String, text: String): String {
+        val source = bigText.ifBlank { text }
+        if (source.isBlank()) return ""
 
-        // 模式1："商户：XXX" / "商户 XXX" / "付款给XXX" / "向XXX付款"
+        // 模式1："商户：XXX" / "商户 XXX" / "付款给XXX" / "向XXX付款" / "转账给XXX"
         val patterns = listOf(
             Regex("""(?:商户|商家|对方)[：:\s]*([^\n\s,，。]{2,20})"""),
             Regex("""付款给\s*([^\n\s,，。]{2,20})"""),
@@ -375,7 +437,7 @@ object NotificationParser {
         )
 
         for (pattern in patterns) {
-            val match = pattern.find(bigText)
+            val match = pattern.find(source)
             if (match != null) {
                 val name = match.groupValues[1].trim()
                 // 过滤明显不是商户名的词
@@ -389,23 +451,28 @@ object NotificationParser {
 
     /** 支付宝通知中的商户名提取 */
     private fun extractMerchantFromAlipay(text: String, bigText: String): String {
-        val source = bigText.ifBlank { text }
-        if (source.isBlank()) return ""
-
-        // 模式1："在XXX消费" / "在XXX付款"
+        // 支付宝的商户名通常在 text 中（如"在星巴克消费¥38.00"），
+        // bigText 可能是补充信息（如"使用红包抵扣¥0.01"），不一定含商户名。
+        // 因此优先搜索 text，找不到再搜索 bigText。
         val patterns = listOf(
             Regex("""在\s*([^\n\s,，。]{2,20})\s*(?:消费|付款|支付)"""),
             Regex("""(?:商户|商家)[：:\s]*([^\n\s,，。]{2,20})"""),
             Regex("""付款给\s*([^\n\s,，。]{2,20})"""),
-            Regex("""([^\n\s,，。]{2,20})\s*[-－]\s*(?:消费|付款|支付)""")
+            Regex("""([^\n\s,，。]{2,20})\s*[-－]\s*(?:消费|付款|支付)"""),
+            // 无"在"字的格式 "星巴克 消费¥38.00" / "星巴克消费¥38.00"
+            Regex("""([^\n\s,，。¥￥]{2,20})\s*(?:消费|付款|支付)[¥￥]""")
         )
 
-        for (pattern in patterns) {
-            val match = pattern.find(source)
-            if (match != null) {
-                val name = match.groupValues[1].trim()
-                if (name.length >= 2 && !isNonMerchantWord(name)) {
-                    return name
+        // 依次搜索 text 和 bigText
+        for (source in listOf(text, bigText)) {
+            if (source.isBlank()) continue
+            for (pattern in patterns) {
+                val match = pattern.find(source)
+                if (match != null) {
+                    val name = match.groupValues[1].trim()
+                    if (name.length >= 2 && !isNonMerchantWord(name)) {
+                        return name
+                    }
                 }
             }
         }
@@ -442,7 +509,8 @@ object NotificationParser {
             "交通银行", "浦发银行", "平安银行", "广发银行", "民生银行",
             "兴业银行", "光大银行", "华夏银行", "北京银行", "邮储银行",
             "消费", "支出", "扣款", "转账", "支付", "还款", "存入",
-            "成功", "失败", "完成", "确认", "取消"
+            "成功", "失败", "完成", "确认", "取消",
+            "实付", "实扣", "应付", "已付"
         )
         return word in nonMerchant
     }

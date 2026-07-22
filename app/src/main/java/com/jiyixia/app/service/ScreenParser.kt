@@ -193,17 +193,27 @@ object ScreenParser {
 
     /**
      * 严格金额提取（与 NotificationParser 一致）
+     *
+     * 改进：
+     * 1. ¥/￥ 符号后取最大金额（避免"红包抵扣¥0.01"取到 0.01）
+     * 2. 支持"实付¥XXX"等动作词+¥组合
+     * 3. 支持"消费38.00"等无"元"后缀的格式
      */
     private fun extractAmountStrict(text: String): Double? {
-        // ¥/￥ 符号 + 数字
+        // ¥/￥ 符号 + 数字（取所有匹配中的最大值）
         val yenPattern = Regex("""[¥￥]\s*(\d+(?:\.\d{1,2})?)""")
-        yenPattern.find(text)?.let { match ->
-            val amount = match.groupValues[1].toDoubleOrNull()
-            if (amount != null && amount > 0 && amount < 1_000_000) return amount
+        val yenMatches = yenPattern.findAll(text).mapNotNull { match ->
+            match.groupValues[1].toDoubleOrNull()
+        }.filter { it > 0 && it < 1_000_000 }.toList()
+
+        if (yenMatches.isNotEmpty()) {
+            return yenMatches.max()
         }
 
-        // "金额：XXX"
-        val amountLabelPattern = Regex("""金额[：:\s]*[¥￥]?\s*(\d+(?:\.\d{1,2})?)""")
+        // "金额：XXX" / "实付¥XXX" / "实扣¥XXX"
+        val amountLabelPattern = Regex(
+            """(?:金额|实付|实扣|应付|已付|消费金额|支付金额|交易金额)[：:\s]*[¥￥]?\s*(\d+(?:\.\d{1,2})?)"""
+        )
         amountLabelPattern.find(text)?.let { match ->
             val amount = match.groupValues[1].toDoubleOrNull()
             if (amount != null && amount > 0 && amount < 1_000_000) return amount
@@ -214,6 +224,15 @@ object ScreenParser {
             """(?:消费|支出|扣款|转账|支付|还款|存入|到账|入账|退款)[^\d]{0,10}(\d+(?:\.\d{1,2})?)\s*元"""
         )
         actionPattern.find(text)?.let { match ->
+            val amount = match.groupValues[1].toDoubleOrNull()
+            if (amount != null && amount > 0 && amount < 1_000_000) return amount
+        }
+
+        // 动作词 + 数字（无"元"后缀）
+        val actionNoYuanPattern = Regex(
+            """(?:消费|支出|扣款|支付|付款)[^\d]{0,5}(\d+\.\d{1,2})"""
+        )
+        actionNoYuanPattern.find(text)?.let { match ->
             val amount = match.groupValues[1].toDoubleOrNull()
             if (amount != null && amount > 0 && amount < 1_000_000) return amount
         }

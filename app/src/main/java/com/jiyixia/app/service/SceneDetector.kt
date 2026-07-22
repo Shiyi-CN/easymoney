@@ -341,6 +341,8 @@ object SceneDetector {
 
     /**
      * 基于商户名推断分类
+     *
+     * 改进：扩充商户词库，覆盖更多常见支付场景
      */
     private fun inferCategoryFromMerchant(merchantName: String, allText: String): String {
         if (merchantName.isBlank()) return "其他"
@@ -351,28 +353,67 @@ object SceneDetector {
         val foodMerchants = listOf(
             "星巴克", "瑞幸", "蜜雪", "喜茶", "奈雪", "麦当劳", "肯德基",
             "必胜客", "汉堡王", "海底捞", "美团外卖", "饿了么",
-            "餐厅", "饭店", "食堂", "火锅", "奶茶", "咖啡", "饮品"
+            "餐厅", "饭店", "食堂", "火锅", "奶茶", "咖啡", "饮品",
+            "汉堡", "炸鸡", "烧烤", "麻辣烫", "拉面", "饺子", "包子",
+            "早餐", "午餐", "晚餐", "夜宵", "小吃", "外卖", "美团", "大众点评",
+            "西贝", "呷哺", "凑凑", "茶百道", "书亦烧仙草", "CoCo", "1点点",
+            "便利蜂", "良品铺子", "三只松鼠", "百果园", "鲜丰水果"
         )
         if (foodMerchants.any { text.contains(it) }) return "餐饮"
 
         // 交通商户
         val transportMerchants = listOf(
-            "滴滴", "高德打车", "美团打车", "曹操出行", "T3出行",
-            "地铁", "公交", "加油", "停车", "高速"
+            "滴滴", "高德打车", "美团打车", "曹操出行", "T3出行", "哈啰",
+            "地铁", "公交", "加油", "停车", "高速", "ETC",
+            "12306", "铁路", "机票", "航空", "携程", "去哪儿", "飞猪",
+            "共享单车", "青桔", "美团单车", "哈啰单车",
+            "中石油", "中石化", "壳牌", "加油站"
         )
         if (transportMerchants.any { text.contains(it) }) return "交通"
 
         // 购物商户
         val shoppingMerchants = listOf(
-            "淘宝", "京东", "拼多多", "天猫", "苏宁", "超市", "便利店"
+            "淘宝", "京东", "拼多多", "天猫", "苏宁", "超市", "便利店",
+            "唯品会", "当当", "得物", "闲鱼", "转转", "1688",
+            "永辉", "沃尔玛", "家乐福", "大润发", "盒马", "叮咚买菜",
+            "美团优选", "多多买菜", "淘菜菜", "每日优鲜",
+            "名创优品", "无印良品", "优衣库", "ZARA", "H&M"
         )
         if (shoppingMerchants.any { text.contains(it) }) return "购物"
 
         // 医疗商户
         val medicalMerchants = listOf(
-            "医院", "药店", "诊所", "牙科", "眼科"
+            "医院", "药店", "诊所", "牙科", "眼科",
+            "大药房", "仁和", "同仁堂", "海王星辰", "益丰", "老百姓",
+            "健康", "体检", "口腔", "皮肤", "中医", "西医"
         )
         if (medicalMerchants.any { text.contains(it) }) return "医疗"
+
+        // 娱乐商户
+        val entertainmentMerchants = listOf(
+            "电影", "影院", "万达", "CGV", "大地影院",
+            "KTV", "密室", "剧本杀", "网吧", "网咖",
+            "游戏", "Steam", " PlayStation", "Xbox", "任天堂",
+            "抖音", "快手", "B站", "bilibili",
+            "演唱会", "音乐节", "话剧", "展览", "博物馆"
+        )
+        if (entertainmentMerchants.any { text.contains(it) }) return "娱乐"
+
+        // 居住/生活商户
+        val livingMerchants = listOf(
+            "水电", "燃气", "物业", "房租", "租金",
+            "国家电网", "自来水", "华润燃气",
+            "美容", "美发", "理发", "美甲", "SPA", "按摩",
+            "干洗", "洗衣", "家政", "保洁"
+        )
+        if (livingMerchants.any { text.contains(it) }) return "居家"
+
+        // 通讯商户
+        val telecomMerchants = listOf(
+            "移动", "联通", "电信", "话费", "宽带",
+            "10086", "10010", "10000"
+        )
+        if (telecomMerchants.any { text.contains(it) }) return "通讯"
 
         return "其他"
     }

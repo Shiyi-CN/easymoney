@@ -70,21 +70,23 @@ class DedupManagerTest {
 
     @Test
     fun `跨来源去重 - 通知已记录则屏幕应跳过`() {
-        // 通知先记录了 38.50
+        // 通知先记录了 38.50 并成功入库
         DedupManager.isDuplicate(38.50, "notification", "com.tencent.mm")
+        DedupManager.markRecorded(38.50, "notification", "com.tencent.mm")
 
         // 屏幕也检测到 38.50（同 app，不同来源）
         val isDup = DedupManager.isDuplicateAcrossSources(
             amount = 38.50,
             excludeSourceType = "screen"
         )
-        assertTrue("跨来源去重：通知已记录，屏幕应跳过", isDup)
+        assertTrue("跨来源去重：通知已入库，屏幕应跳过", isDup)
     }
 
     @Test
     fun `跨来源去重 - 排除自身来源`() {
-        // 通知记录了 38.50
+        // 通知记录了 38.50 并入库
         DedupManager.isDuplicate(38.50, "notification", "com.tencent.mm")
+        DedupManager.markRecorded(38.50, "notification", "com.tencent.mm")
 
         // 检查通知来源本身（应不重复，因为排除了 notification）
         val isDup = DedupManager.isDuplicateAcrossSources(
@@ -97,6 +99,7 @@ class DedupManagerTest {
     @Test
     fun `跨来源去重 - 不同金额不判重`() {
         DedupManager.isDuplicate(38.50, "notification", "com.tencent.mm")
+        DedupManager.markRecorded(38.50, "notification", "com.tencent.mm")
 
         val isDup = DedupManager.isDuplicateAcrossSources(
             amount = 50.00,
@@ -139,20 +142,82 @@ class DedupManagerTest {
         assertEquals(2, DedupManager.cacheSize())
     }
 
+    // ========== 回归测试：修复双重拒绝 bug ==========
+
+    /**
+     * 回归：通知被拒绝时，屏幕检测不应被跨来源去重跳过
+     *
+     * 场景：通知先到，被营销过滤拒绝（未调用 markRecorded）。
+     * 屏幕后到，跨来源去重检查时，通知的条目 recorded=false，
+     * 不应阻止屏幕记录。
+     *
+     * 修复前：isDuplicateAcrossSources 不检查 recorded，会误判为重复，
+     * 导致"通知被拒绝 → 屏幕也被跳过"的双重拒绝问题。
+     * 修复后：只对 recorded=true 的条目判重。
+     */
+    @Test
+    fun `回归 - 未入库的检测不应阻止其他来源记录`() {
+        // 通知检测到 38.50，但被营销过滤拒绝（未调用 markRecorded）
+        DedupManager.isDuplicate(38.50, "notification", "com.tencent.mm")
+        // 注意：不调用 markRecorded，模拟通知被拒绝的场景
+
+        // 屏幕也检测到 38.50
+        val crossDup = DedupManager.isDuplicateAcrossSources(
+            amount = 38.50,
+            excludeSourceType = "screen"
+        )
+        assertFalse("通知未入库，屏幕不应被跨来源去重跳过", crossDup)
+    }
+
+    /**
+     * 回归：已入库的检测应阻止其他来源记录
+     *
+     * 场景：通知成功记录到数据库（调用了 markRecorded）。
+     * 屏幕后到，应被跨来源去重跳过。
+     */
+    @Test
+    fun `回归 - 已入库的检测应阻止其他来源记录`() {
+        // 通知检测到 38.50 并成功入库
+        DedupManager.isDuplicate(38.50, "notification", "com.tencent.mm")
+        DedupManager.markRecorded(38.50, "notification", "com.tencent.mm")
+
+        // 屏幕也检测到 38.50
+        val crossDup = DedupManager.isDuplicateAcrossSources(
+            amount = 38.50,
+            excludeSourceType = "screen"
+        )
+        assertTrue("通知已入库，屏幕应被跨来源去重跳过", crossDup)
+    }
+
+    /**
+     * 回归：markRecorded 应正确标记条目
+     */
+    @Test
+    fun `回归 - markRecorded 应正确标记条目`() {
+        // 检测到但未入库
+        DedupManager.isDuplicate(38.50, "notification", "com.tencent.mm")
+        assertFalse(DedupManager.isDuplicateAcrossSources(38.50, "screen"))
+
+        // 标记为已入库
+        DedupManager.markRecorded(38.50, "notification", "com.tencent.mm")
+        assertTrue(DedupManager.isDuplicateAcrossSources(38.50, "screen"))
+    }
+
     @Test
     fun `短信来源与通知来源应独立去重`() {
-        // 短信记录 38.50
+        // 短信记录 38.50 并入库
         DedupManager.isDuplicate(38.50, "sms", "95588")
+        DedupManager.markRecorded(38.50, "sms", "95588")
 
         // 通知也检测到 38.50（不同来源类型，应不判重）
         val isDup = DedupManager.isDuplicate(38.50, "notification", "com.tencent.mm")
         assertFalse("短信和通知是不同来源，应独立记录", isDup)
 
-        // 但跨来源检查应发现重复
+        // 但跨来源检查应发现重复（短信已入库）
         val crossDup = DedupManager.isDuplicateAcrossSources(
             amount = 38.50,
             excludeSourceType = "notification"
         )
-        assertTrue("跨来源检查应发现短信已记录", crossDup)
+        assertTrue("跨来源检查应发现短信已入库", crossDup)
     }
 }

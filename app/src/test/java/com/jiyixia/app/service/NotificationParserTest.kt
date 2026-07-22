@@ -340,4 +340,163 @@ class NotificationParserTest {
         val result = NotificationParser.extractTransaction(content)
         assertNull("无支付成功词的通知应被拒绝", result)
     }
+
+    // ========== 回归测试：修复后的场景 ==========
+
+    /**
+     * 回归：含"红包抵扣"但实际是消费的通知不应被误判为营销
+     *
+     * 真实场景：支付宝通知"使用红包抵扣¥0.01，实付¥38.00"
+     * 修复前：含"红包"被营销过滤拒绝 → 该识别的没识别
+     * 修复后：同时含"实付"支付确认词 + ¥金额，视为消费
+     */
+    @Test
+    fun `回归 - 含红包抵扣的实付通知应识别为消费`() {
+        val content = NotificationParser.NotificationContent(
+            title = "支付宝",
+            subText = "",
+            text = "在星巴克消费¥38.00",
+            bigText = "使用红包抵扣¥0.01，实付¥38.00",
+            summaryText = "",
+            textLines = emptyList(),
+            packageName = "com.eg.android.AlipayGphone",
+            allText = "支付宝 在星巴克消费¥38.00 使用红包抵扣¥0.01，实付¥38.00"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull("含红包抵扣的实付通知应识别为消费", result)
+        // 修复后取最大金额，应为 38.00 而非 0.01
+        assertEquals(38.00, result!!.amount, 0.001)
+        assertEquals("星巴克", result.merchantName)
+    }
+
+    /**
+     * 回归：金额取最大值，避免红包金额被误识别为消费金额
+     *
+     * 修复前：只取第一个 ¥ 金额，可能取到"¥0.01"
+     * 修复后：取所有 ¥ 金额中的最大值
+     */
+    @Test
+    fun `回归 - 多个金额应取最大值`() {
+        val content = NotificationParser.NotificationContent(
+            title = "微信支付",
+            subText = "",
+            text = "¥38.00",
+            bigText = "红包抵扣¥0.01\n实付¥38.00\n金额：¥38.00",
+            summaryText = "",
+            textLines = emptyList(),
+            packageName = "com.tencent.mm",
+            allText = "微信支付 ¥38.00 红包抵扣¥0.01 实付¥38.00 金额：¥38.00"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull(result)
+        assertEquals(38.00, result!!.amount, 0.001)
+    }
+
+    /**
+     * 回归：支付宝无"在"字的商户名格式
+     *
+     * 修复前：只支持"在XXX消费"，"星巴克消费¥38"无法提取商户名
+     * 修复后：支持"XXX消费¥"格式
+     */
+    @Test
+    fun `回归 - 支付宝无在字的商户名格式`() {
+        val content = NotificationParser.NotificationContent(
+            title = "支付宝",
+            subText = "",
+            text = "星巴克消费¥38.00",
+            bigText = "",
+            summaryText = "",
+            textLines = emptyList(),
+            packageName = "com.eg.android.AlipayGphone",
+            allText = "支付宝 星巴克消费¥38.00"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull(result)
+        assertEquals(38.00, result!!.amount, 0.001)
+        assertEquals("星巴克", result.merchantName)
+    }
+
+    /**
+     * 回归：无"元"后缀的金额格式
+     *
+     * 修复前：只支持"¥38.00"或"消费38元"，"消费38.00"无法识别
+     * 修复后：支持动作词+小数格式
+     */
+    @Test
+    fun `回归 - 无元后缀的金额格式`() {
+        val content = NotificationParser.NotificationContent(
+            title = "支付宝",
+            subText = "",
+            text = "在星巴克消费38.00",
+            bigText = "",
+            summaryText = "",
+            textLines = emptyList(),
+            packageName = "com.eg.android.AlipayGphone",
+            allText = "支付宝 在星巴克消费38.00"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull(result)
+        assertEquals(38.00, result!!.amount, 0.001)
+    }
+
+    /**
+     * 回归：美团/京东等第三方app的"订单已支付"格式
+     *
+     * 修复前：只支持"支付成功/付款成功"，"订单已支付"被拒绝
+     * 修复后：支持"订单已支付"等扩展确认词
+     */
+    @Test
+    fun `回归 - 第三方app订单已支付格式`() {
+        val content = NotificationParser.NotificationContent(
+            title = "美团外卖",
+            subText = "",
+            text = "订单已支付 ¥25.50",
+            bigText = "",
+            summaryText = "",
+            textLines = emptyList(),
+            packageName = "com.sankuai.meituan.takeoutnew",
+            allText = "美团外卖 订单已支付 ¥25.50"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull(result)
+        assertEquals(25.50, result!!.amount, 0.001)
+    }
+
+    /**
+     * 回归：滴滴行程费用格式
+     */
+    @Test
+    fun `回归 - 滴滴行程费用格式`() {
+        val content = NotificationParser.NotificationContent(
+            title = "滴滴出行",
+            subText = "",
+            text = "行程费用已支付¥18.50",
+            bigText = "",
+            summaryText = "",
+            textLines = emptyList(),
+            packageName = "com.sdu.didi.psnger",
+            allText = "滴滴出行 行程费用已支付¥18.50"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull(result)
+        assertEquals(18.50, result!!.amount, 0.001)
+    }
+
+    /**
+     * 回归：银行短信发送方不在旧列表中
+     *
+     * 修复前：95516（银联）、95527（上海银行）等不在列表，短信被拒绝
+     * 修复后：扩展了银行发送方列表
+     */
+    @Test
+    fun `回归 - 银联短信应解析`() {
+        val content = NotificationParser.parseSms(
+            sender = "95516",
+            body = "【银联】您尾号1234卡于06月21日在星巴克消费38.00元"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull(result)
+        assertEquals(38.00, result!!.amount, 0.001)
+    }
 }
+

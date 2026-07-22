@@ -257,6 +257,10 @@ object PaymentDetector {
                     )
                 )
 
+                // 6.1 标记此条检测已成功入库，使跨来源去重能识别
+                //    （避免通知和屏幕同时记录同一笔支付）
+                DedupManager.markRecorded(amount, sourceType, appSignature)
+
                 // 7. 显示通知
                 showDetectNotification(context, amount, notePrefix, isPending)
                 addLog("$sourceType $notePrefix ¥$amount ($confidence%)")
