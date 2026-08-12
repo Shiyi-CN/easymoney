@@ -63,12 +63,15 @@ class PaymentAccessibilityService : AccessibilityService() {
         // 严格过滤：只处理支付相关 app
         if (!PaymentDetector.isPaymentApp(packageName)) return
 
+        // 诊断日志：确认辅助功能服务在运行并收到事件
+        PaymentDetector.addDiagnosticLog("[A11y] 收到事件: pkg=$packageName, type=0x${event.eventType.toString(16)}")
+
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 // 页面切换，重置节流和待确认状态
                 lastProcessTime.remove(packageName)
                 pendingPaymentPages.remove(packageName)
-                if (BuildConfig.DEBUG) Log.d(TAG, "页面切换: pkg=$packageName")
+                PaymentDetector.addDiagnosticLog("[A11y] 页面切换: pkg=$packageName")
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 // 节流：同一包名 5 秒内只处理一次
@@ -99,28 +102,40 @@ class PaymentAccessibilityService : AccessibilityService() {
      * - 页面动画/倒计时多次触发
      */
     private fun processCurrentScreen(packageName: String) {
-        val rootNode = rootInActiveWindow ?: return
+        val rootNode = rootInActiveWindow ?: run {
+            PaymentDetector.addDiagnosticLog("[A11y] rootInActiveWindow 为空: pkg=$packageName")
+            return
+        }
 
         try {
             // 使用 ScreenParser 结构化解析（带深度限制和文本过滤）
             val content = ScreenParser.parse(rootNode, packageName)
             val allText = content.allText
 
-            if (allText.isBlank()) return
-
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "屏幕文本: pkg=$packageName, text=${allText.take(200)}")
+            if (allText.isBlank()) {
+                PaymentDetector.addDiagnosticLog("[A11y] 屏幕文本为空: pkg=$packageName")
+                return
             }
 
-            // 快速预检：必须包含支付成功关键词才继续
+            PaymentDetector.addDiagnosticLog("[A11y] 屏幕文本: pkg=$packageName, text=${allText.take(80)}")
+
+            // 快速预检：必须包含支付成功/收款成功关键词才继续
             // （避免每个内容变化都做完整解析）
+            // 收款场景：别人转账给你，你点击收款后显示"已收款"/"收款成功"
             val paymentSuccessKeywords = listOf(
                 "支付成功", "付款成功", "转账成功", "交易成功", "购买成功",
                 "支付完成", "付款完成", "转账完成", "交易完成",
-                "已支付", "已付款", "已扣款"
+                "已支付", "已付款", "已扣款",
+                // 收款场景（别人转账给你，你点击收款）
+                "已收款", "收款成功", "已确认收款"
             )
             val hasPaymentSuccess = paymentSuccessKeywords.any { allText.contains(it) }
-            if (!hasPaymentSuccess) return
+            if (!hasPaymentSuccess) {
+                // 不记录无关键词的日志，避免刷屏
+                return
+            }
+
+            PaymentDetector.addDiagnosticLog("[A11y] ✅ 检测到支付/收款关键词: pkg=$packageName")
 
             // 页面停留检测
             val now = System.currentTimeMillis()
@@ -129,18 +144,14 @@ class PaymentAccessibilityService : AccessibilityService() {
             if (pendingTime == null) {
                 // 首次检测到支付成功页，记录为待确认
                 pendingPaymentPages[packageName] = now
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "检测到支付成功页，等待 ${STABLE_CHECK_DELAY_MS}ms 确认: pkg=$packageName")
-                }
+                PaymentDetector.addDiagnosticLog("[A11y] 待确认，等待 ${STABLE_CHECK_DELAY_MS}ms: pkg=$packageName")
                 return
             }
 
             // 已在待确认状态，检查是否超过稳定时间
             val dwellTime = now - pendingTime
             if (dwellTime < STABLE_CHECK_DELAY_MS) {
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "支付页停留 ${dwellTime}ms，未达 ${STABLE_CHECK_DELAY_MS}ms，继续等待")
-                }
+                PaymentDetector.addDiagnosticLog("[A11y] 停留 ${dwellTime}ms，未达阈值，继续等待")
                 return
             }
 
@@ -148,9 +159,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             // 清除待确认状态，避免重复触发
             pendingPaymentPages.remove(packageName)
 
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "支付页确认，触发检测: pkg=$packageName, dwell=${dwellTime}ms")
-            }
+            PaymentDetector.addDiagnosticLog("[A11y] ✅ 确认支付页，触发检测: pkg=$packageName, dwell=${dwellTime}ms")
 
             // 委托给 PaymentDetector 处理（包含结构化解析、去重、场景识别）
             PaymentDetector.processScreen(
@@ -160,6 +169,7 @@ class PaymentAccessibilityService : AccessibilityService() {
             )
 
         } catch (e: Exception) {
+            PaymentDetector.addDiagnosticLog("[A11y] ❌ 处理失败: ${e.message}")
             Log.e(TAG, "处理屏幕内容失败", e)
         } finally {
             // 立即丢弃节点信息，保护隐私

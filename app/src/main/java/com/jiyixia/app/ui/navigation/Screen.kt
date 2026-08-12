@@ -10,11 +10,21 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     data object Home : Screen("home", "首页", Icons.Default.Home)
     data object Stats : Screen("stats", "统计", Icons.Default.BarChart)
     data object Settings : Screen("settings", "设置", Icons.Default.Settings)
-    data object QuickRecord : Screen("quick_record", "快速记账", Icons.Default.Home)
+    data object QuickRecord : Screen("quick_record", "快速记账", Icons.Default.Home) {
+        const val ROUTE_WITH_ARG = "quick_record?voiceText={voiceText}"
+        fun createRoute(voiceText: String = ""): String {
+            return if (voiceText.isBlank()) {
+                "quick_record"
+            } else {
+                "quick_record?voiceText=${android.net.Uri.encode(voiceText)}"
+            }
+        }
+    }
     data object ReimbursableRecords : Screen("reimbursable_records", "待报销记录", Icons.Default.Home)
     data object CategoryManagement : Screen("category_management", "分类管理", Icons.Default.Home)
     data object CrashLog : Screen("crash_log", "崩溃日志", Icons.Default.Home)
     data object YearStats : Screen("year_stats", "年度总览", Icons.Default.Home)
+    data object KeywordMapping : Screen("keyword_mapping", "自定义关键词", Icons.Default.Home)
 }
 
 val screens = listOf(Screen.Home, Screen.Stats, Screen.Settings)

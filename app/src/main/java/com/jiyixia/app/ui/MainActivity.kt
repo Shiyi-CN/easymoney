@@ -31,6 +31,7 @@ import com.jiyixia.app.ui.screens.ReimbursableRecordsScreen
 import com.jiyixia.app.ui.screens.CategoryManagementScreen
 import com.jiyixia.app.ui.screens.CrashLogScreen
 import com.jiyixia.app.ui.screens.SettingsScreen
+import com.jiyixia.app.ui.screens.KeywordMappingScreen
 import com.jiyixia.app.ui.screens.StatsScreen
 import com.jiyixia.app.ui.screens.YearStatsScreen
 import com.jiyixia.app.ui.theme.JiYiXiaTheme
@@ -117,6 +118,9 @@ fun MainApp() {
                     onNavigateToQuickRecord = {
                         navController.navigate(Screen.QuickRecord.route)
                     },
+                    onNavigateToQuickRecordWithVoice = { voiceText ->
+                        navController.navigate(Screen.QuickRecord.createRoute(voiceText))
+                    },
                     onNavigateToReimbursable = {
                         navController.navigate(Screen.ReimbursableRecords.route)
                     }
@@ -139,11 +143,25 @@ fun MainApp() {
                     },
                     onNavigateToCrashLog = {
                         navController.navigate(Screen.CrashLog.route)
+                    },
+                    onNavigateToKeywordMapping = {
+                        navController.navigate(Screen.KeywordMapping.route)
                     }
                 )
             }
-            composable(Screen.QuickRecord.route) {
+            composable(
+                route = Screen.QuickRecord.ROUTE_WITH_ARG,
+                arguments = listOf(
+                    androidx.navigation.navArgument("voiceText") {
+                        type = androidx.navigation.NavType.StringType
+                        defaultValue = ""
+                        nullable = true
+                    }
+                )
+            ) { backStackEntry ->
+                val voiceText = backStackEntry.arguments?.getString("voiceText") ?: ""
                 QuickRecordScreen(
+                    initialVoiceText = voiceText,
                     onNavigateBack = {
                         navController.popBackStack()
                     }
@@ -165,6 +183,13 @@ fun MainApp() {
             }
             composable(Screen.CrashLog.route) {
                 CrashLogScreen()
+            }
+            composable(Screen.KeywordMapping.route) {
+                KeywordMappingScreen(
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    }
+                )
             }
             composable(Screen.YearStats.route) {
                 YearStatsScreen()

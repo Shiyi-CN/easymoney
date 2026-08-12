@@ -16,3 +16,9 @@
 -dontwarn androidx.compose.**
 -keep class androidx.compose.** { *; }
 -keepclassmembers class androidx.compose.** { *; }
+
+# 讯飞 MSC SDK
+-keep class com.iflytek.** { *; }
+-dontwarn com.iflytek.**
+-keepattributes Signature
+-keepattributes *Annotation*

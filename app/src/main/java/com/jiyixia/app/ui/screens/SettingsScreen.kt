@@ -93,7 +93,8 @@ private fun getFileName(context: Context, uri: Uri): String? {
 @Composable
 fun SettingsScreen(
     onNavigateToCategoryManagement: () -> Unit = {},
-    onNavigateToCrashLog: () -> Unit = {}
+    onNavigateToCrashLog: () -> Unit = {},
+    onNavigateToKeywordMapping: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -465,6 +466,20 @@ fun SettingsScreen(
                         colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary)
                     )
                 }
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // ═══ 智能记账 ════════════════════════════════════════════════════════════
+        SectionTitle("智能记账")
+        SettingsCard {
+            SettingsRow(
+                iconBg = Color(0xFFFFF3E0), icon = "🏷️",
+                title = "自定义关键词",
+                desc = "将个人习惯用语绑定至分类（如「过早」→「餐饮」）",
+                trailing = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp) },
+                onClick = onNavigateToKeywordMapping
             )
         }
 

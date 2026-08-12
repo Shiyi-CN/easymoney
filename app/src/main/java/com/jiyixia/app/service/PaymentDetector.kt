@@ -62,15 +62,24 @@ object PaymentDetector {
         context: Context,
         detectedTime: Long = System.currentTimeMillis()
     ) {
-        if (!isPaymentApp(packageName)) return
+        addLog("[诊断] 收到通知: pkg=$packageName")
+
+        if (!isPaymentApp(packageName)) {
+            addLog("[诊断] 非支付app，跳过: pkg=$packageName")
+            return
+        }
 
         // 1. 结构化解析通知
         val content = NotificationParser.parse(notification, packageName)
+        addLog("[诊断] 解析通知: pkg=$packageName, title=${content.title}, text=${content.text.take(30)}")
+
         val parsed = NotificationParser.extractTransaction(content) ?: run {
+            addLog("[诊断] ❌ 解析失败/被过滤: pkg=$packageName, title=${content.title}, allText=${content.allText.take(60)}")
             Log.d(TAG, "通知解析失败或被过滤: pkg=$packageName, title=${content.title}")
             return
         }
 
+        addLog("[诊断] ✅ 解析成功: pkg=$packageName, amount=${parsed.amount}, merchant=${parsed.merchantName}")
         Log.d(TAG, "通知解析成功: pkg=$packageName, amount=${parsed.amount}, " +
                 "merchant=${parsed.merchantName}, scene=${parsed.scene}")
 
@@ -166,21 +175,27 @@ object PaymentDetector {
         detectedTime: Long
     ) {
         val amount = parsed.amount
-        if (amount <= 0) return
+        if (amount <= 0) {
+            addLog("[诊断] ❌ 金额无效: amount=$amount, source=$sourceType")
+            return
+        }
 
         // 1. 智能去重
         // 1.1 同来源同金额 5 分钟内去重
         if (DedupManager.isDuplicate(amount, sourceType, appSignature)) {
+            addLog("[诊断] ⏭️ 同来源去重跳过: amount=$amount, source=$sourceType")
             return
         }
 
         // 1.2 跨来源去重：如果其他来源已经记录过此金额，跳过
         // （例如：通知已经记录了 ¥38，屏幕检测到 ¥38 应该跳过）
         if (DedupManager.isDuplicateAcrossSources(amount, excludeSourceType = sourceType)) {
+            addLog("[诊断] ⏭️ 跨来源去重跳过: amount=$amount, source=$sourceType")
             Log.d(TAG, "跨来源去重跳过: amount=$amount, source=$sourceType")
             return
         }
 
+        addLog("[诊断] ✅ 通过去重: amount=$amount, source=$sourceType, app=$appSignature")
         Log.d(TAG, "通过去重: amount=$amount, source=$sourceType, app=$appSignature")
 
         val app = context.applicationContext as JiYiXiaApp
@@ -341,6 +356,14 @@ object PaymentDetector {
         }
     }
 
+    /**
+     * 供外部调用（如 PaymentAccessibilityService）添加诊断日志
+     * 用于排查辅助功能服务是否正常工作
+     */
+    fun addDiagnosticLog(msg: String) {
+        addLog(msg)
+    }
+
     // ═══════════════════════════════════════════════════════════
     //  支付 app 识别（供各检测层共用）
     // ═══════════════════════════════════════════════════════════
@@ -354,6 +377,7 @@ object PaymentDetector {
         "com.tencent.mm",                     // 微信
         "com.tencent.mobileqq",               // QQ
         "com.unionpay",                       // 云闪付
+        "com.jd.jrapp",                       // 京东金融
         // 电商 / 外卖
         "com.taobao.taobao",                  // 淘宝
         "com.jingdong.app.mall",              // 京东
@@ -363,6 +387,8 @@ object PaymentDetector {
         "com.dianping.v1",                    // 大众点评
         "com.xunmeng.pinduoduo",              // 拼多多
         "com.ss.android.ugc.aweme",           // 抖音
+        "com.smile.gifmaker",                 // 快手
+        "com.xingin.xhs",                     // 小红书
         // 出行 / 打车
         "com.autonavi.minimap",               // 高德地图
         "com.baidu.BaiduMap",                 // 百度地图
@@ -374,7 +400,17 @@ object PaymentDetector {
         "com.taxiservice",                    // T3出行
         "com.hellobike",
         "com.meituan.taxi",
-        "com.xiaojukeji.hitch"
+        "com.xiaojukeji.hitch",
+        // 旅行 / 票务
+        "ctrip.android.view",                 // 携程旅行
+        "com.MobileTicket",                   // 12306
+        "com.qunar",                          // 去哪儿
+        "com.feeyo",                          // 飞常准
+        // 餐饮
+        "com.mcdonalds.gma.cn",               // 麦当劳
+        "com.kfc.mobile",                     // 肯德基
+        "com.starbucks.cn",                   // 星巴克
+        "com.lucky.luckyapp"                  // 瑞幸咖啡
     )
 
     /** 银行 app 包名前缀 */
@@ -383,7 +419,15 @@ object PaymentDetector {
         "com.boc.bocsoft", "com.bankcomm", "com.cmbchina",
         "com.spdbccc", "com.pingan", "com.cgbchina", "com.cmbc.mbank",
         "com.cib", "com.cebbank", "com.hxb", "com.bankofbeijing",
-        "com.yitong.mbank.psbc", "com.psbc"
+        "com.yitong.mbank.psbc", "com.psbc",
+        // 新增银行/信用卡 APP
+        "com.cmbchina.ccdesk",                // 招商银行掌上生活
+        "com.citiccard",                      // 中信银行信用卡（动卡空间）
+        "com.cgb.xingye",                     // 兴业银行
+        "com.pa.cccd",                        // 平安信用卡
+        "com.spdb",                           // 浦发银行
+        "com.cebbank",                        // 光大银行
+        "com.bankcomm.bankcomm"               // 交通银行
     )
 
     /** 判断是否为支付相关 app */

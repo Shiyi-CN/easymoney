@@ -1,7 +1,17 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
+}
+
+// 读取正式签名凭据（keystore.properties 不提交 Git）
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
@@ -12,8 +22,8 @@ android {
         applicationId = "com.jiyixia.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 21
-        versionName = "1.3.11"
+        versionCode = 43
+        versionName = "1.3.33"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -21,8 +31,14 @@ android {
     }
 
     signingConfigs {
+        create("release") {
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+            storeFile = file(keystoreProperties.getProperty("storeFile") ?: "")
+            storePassword = keystoreProperties.getProperty("storePassword")
+        }
         getByName("debug") {
-            // 使用默认调试密钥，后续可替换为正式密钥
+            // debug 构建继续使用默认调试密钥
         }
     }
 
@@ -34,7 +50,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -66,6 +82,9 @@ android {
 }
 
 dependencies {
+    // 讯飞 MSC SDK（语音听写，支持离线）
+    implementation(files("libs/Msc.jar"))
+
     // Kotlin
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22")
 

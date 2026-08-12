@@ -1,6 +1,8 @@
 package com.jiyixia.app.ui.screens
 
 import android.app.Application
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -11,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,12 +21,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import com.jiyixia.app.data.RecordMode
 import com.jiyixia.app.data.ThemePreferences
 import com.jiyixia.app.data.entity.Category
@@ -31,8 +37,10 @@ import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.ui.theme.*
 import com.jiyixia.app.util.CategoryEmoji
 import com.jiyixia.app.domain.usecase.SmartParseUseCase
+import com.jiyixia.app.util.KeywordMappingManager
 import com.jiyixia.app.domain.usecase.InputValidationUseCase
 import com.jiyixia.app.domain.usecase.ValidationResult
+import com.jiyixia.app.ui.components.XfyunVoiceDialog
 import com.jiyixia.app.util.toCents
 import com.jiyixia.app.viewmodel.HomeViewModel
 import kotlinx.coroutines.Job
@@ -55,6 +63,7 @@ import com.jiyixia.app.ui.screens.HomeViewModelFactory
 @Composable
 fun QuickRecordScreen(
     onNavigateBack: () -> Unit,
+    initialVoiceText: String = "",
     vm: HomeViewModel = viewModel(
         factory = HomeViewModelFactory(LocalContext.current.applicationContext as Application)
     )
@@ -74,6 +83,16 @@ fun QuickRecordScreen(
     var isSaving by remember { mutableStateOf(false) }
     var showSuccess by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
+
+    // 语音记账：讯飞离线语音识别对话框
+    val amountFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    var showVoiceDialog by remember { mutableStateOf(false) }
+
+    // 启动语音记账
+    val startVoiceRecognition: () -> Unit = {
+        showVoiceDialog = true
+    }
 
     // 协程作用域（修复：使用 Job 来取消之前的协程）
     val scope = rememberCoroutineScope()
@@ -137,90 +156,114 @@ fun QuickRecordScreen(
         hasInitialized = true
     }
 
-    // 自动保存逻辑（仅极速模式生效）
-    LaunchedEffect(amountText, isQuickMode) {
-        // 确认模式下不自动保存
-        if (!isQuickMode) return@LaunchedEffect
-
+    // 统一的自动保存函数
+    fun autoSave() {
         // 取消之前的保存任务
         saveJob?.cancel()
         validationError = null
 
-        // 等待一小段时间，确保状态更新
-        delay(100)
+        if (amountText.isBlank()) return
 
-        if (amountText.isNotBlank()) {
-            // 使用 SmartParseUseCase 统一解析逻辑
-            val nameToId = displayCategories.associate { it.name to it.id }
-            val defaultCategoryId = displayCategories.firstOrNull()?.id ?: 0L
-            val parsed = SmartParseUseCase.parse(
-                text = amountText,
-                categoryNameToId = nameToId,
-                defaultCategoryId = defaultCategoryId
-            )
+        // 使用 SmartParseUseCase 统一解析逻辑
+        val nameToId = displayCategories.associate { it.name to it.id }
+        val defaultCategoryId = displayCategories.firstOrNull()?.id ?: 0L
+        val parsed = SmartParseUseCase.parse(
+            text = amountText,
+            categoryNameToId = nameToId,
+            defaultCategoryId = defaultCategoryId,
+            keywordMappings = KeywordMappingManager.getAll()
+        )
 
-            if (parsed != null && parsed.amount > 0) {
-                // 启动新的保存任务
-                saveJob = scope.launch {
-                    // 延迟500ms后自动保存（给用户修正时间）
-                    delay(500)
+        if (parsed != null && parsed.amount > 0) {
+            // 启动新的保存任务
+            saveJob = scope.launch {
+                // 延迟500ms后自动保存（给用户修正时间）
+                delay(500)
 
-                    // 再次解析，确保用户没有修改
-                    val currentParsed = SmartParseUseCase.parse(
-                        text = amountText,
-                        categoryNameToId = nameToId,
-                        defaultCategoryId = defaultCategoryId
-                    )
+                // 再次解析，确保用户没有修改
+                val currentParsed = SmartParseUseCase.parse(
+                    text = amountText,
+                    categoryNameToId = nameToId,
+                    defaultCategoryId = defaultCategoryId,
+                    keywordMappings = KeywordMappingManager.getAll()
+                )
 
-                    if (currentParsed != null && currentParsed.amount > 0) {
-                        // 输入验证
-                        val amountCents = currentParsed.amount.toCents()
-                        val amountValidation = InputValidationUseCase.validateAmount(amountCents)
-                        val noteValidation = InputValidationUseCase.validateNote(currentParsed.note)
+                if (currentParsed != null && currentParsed.amount > 0) {
+                    // 输入验证
+                    val amountCents = currentParsed.amount.toCents()
+                    val amountValidation = InputValidationUseCase.validateAmount(amountCents)
+                    val noteValidation = InputValidationUseCase.validateNote(currentParsed.note)
 
-                        when {
-                            amountValidation is ValidationResult.Error -> {
-                                validationError = amountValidation.message
-                                return@launch
-                            }
-                            noteValidation is ValidationResult.Error -> {
-                                validationError = noteValidation.message
-                                return@launch
-                            }
+                    when {
+                        amountValidation is ValidationResult.Error -> {
+                            validationError = amountValidation.message
+                            return@launch
                         }
-
-                        isSaving = true
-                        val currentCategory = displayCategories.find { it.id == currentParsed.categoryId }
-                            ?: displayCategories.find { it.id == selectedCategoryId }
-
-                        if (currentCategory != null) {
-                            val recordType = if (currentParsed.isExpense) 0 else 1
-                            vm.addRecord(
-                                amount = amountCents,
-                                categoryId = currentCategory.id,
-                                note = currentParsed.note,
-                                type = recordType,
-                                isReimbursable = currentParsed.isReimbursable,
-                                reimbursementTarget = currentParsed.reimbursementTarget
-                            )
-
-                            // 记录成功后，更新当前类型（下一笔自动跟上）
-                            currentType = recordType
-
-                            // 显示成功提示
-                            showSuccess = true
-                            delay(1000)
-
-                            // 返回上一页
-                            onNavigateBack()
+                        noteValidation is ValidationResult.Error -> {
+                            validationError = noteValidation.message
+                            return@launch
                         }
-                        isSaving = false
                     }
+
+                    isSaving = true
+                    val currentCategory = displayCategories.find { it.id == currentParsed.categoryId }
+                        ?: displayCategories.find { it.id == selectedCategoryId }
+
+                    if (currentCategory != null) {
+                        val recordType = if (currentParsed.isExpense) 0 else 1
+                        vm.addRecord(
+                            amount = amountCents,
+                            categoryId = currentCategory.id,
+                            note = currentParsed.note,
+                            type = recordType,
+                            isReimbursable = currentParsed.isReimbursable,
+                            reimbursementTarget = currentParsed.reimbursementTarget
+                        )
+
+                        // 记录成功后，更新当前类型（下一笔自动跟上）
+                        currentType = recordType
+
+                        // 显示成功提示
+                        showSuccess = true
+                        delay(1000)
+
+                        // 返回上一页
+                        onNavigateBack()
+                    }
+                    isSaving = false
                 }
-            } else if (parsed != null && parsed.amount <= 0) {
-                // 解析成功但金额为0或负数
-                validationError = "请输入有效金额"
             }
+        } else if (parsed != null && parsed.amount <= 0) {
+            // 解析成功但金额为0或负数
+            validationError = "请输入有效金额"
+        }
+    }
+
+    // 语音输入触发的保存标志（等分类加载完成后再执行自动保存）
+    var voiceSaveRequested by remember { mutableStateOf(false) }
+
+    // 自动保存逻辑（仅极速模式生效）
+    LaunchedEffect(amountText, isQuickMode) {
+        // 确认模式下不自动保存
+        if (!isQuickMode) return@LaunchedEffect
+        // 语音输入触发的保存由专属 LaunchedEffect 处理，避免重复
+        if (voiceSaveRequested) return@LaunchedEffect
+        autoSave()
+    }
+
+    // 从 HomeScreen 长按 FAB 带入的语音识别结果
+    LaunchedEffect(initialVoiceText) {
+        if (initialVoiceText.isNotBlank()) {
+            amountText = initialVoiceText
+            voiceSaveRequested = true
+        }
+    }
+
+    // 当语音保存请求已发起且分类列表就绪时，执行自动保存
+    LaunchedEffect(voiceSaveRequested, displayCategories) {
+        if (voiceSaveRequested && displayCategories.isNotEmpty()) {
+            voiceSaveRequested = false
+            autoSave()
         }
     }
 
@@ -251,7 +294,9 @@ fun QuickRecordScreen(
                 amountText = amountText,
                 onAmountChange = { amountText = it },
                 currentType = currentType,
-                onTypeChange = { currentType = it }
+                onTypeChange = { currentType = it },
+                onVoiceInput = { startVoiceRecognition() },
+                focusRequester = amountFocusRequester
             )
 
             Spacer(Modifier.height(24.dp))
@@ -305,7 +350,8 @@ fun QuickRecordScreen(
                             val parsed = SmartParseUseCase.parse(
                                 text = amountText,
                                 categoryNameToId = nameToId,
-                                defaultCategoryId = defaultCategoryId
+                                defaultCategoryId = defaultCategoryId,
+                                keywordMappings = KeywordMappingManager.getAll()
                             )
 
                             if (parsed != null && parsed.amount > 0) {
@@ -367,6 +413,17 @@ fun QuickRecordScreen(
             }
         }
     }
+
+    // 讯飞离线语音识别对话框
+    if (showVoiceDialog) {
+        XfyunVoiceDialog(
+            onResult = { text ->
+                showVoiceDialog = false
+                amountText = text
+            },
+            onDismiss = { showVoiceDialog = false }
+        )
+    }
 }
 
 /**
@@ -377,7 +434,9 @@ private fun AmountInputSection(
     amountText: String,
     onAmountChange: (String) -> Unit,
     currentType: Int,
-    onTypeChange: (Int) -> Unit
+    onTypeChange: (Int) -> Unit,
+    onVoiceInput: () -> Unit = {},
+    focusRequester: FocusRequester = remember { FocusRequester() }
 ) {
     Column(
         modifier = Modifier
@@ -428,13 +487,24 @@ private fun AmountInputSection(
                     onAmountChange(v)
             },
             label = { Text("金额或描述（如：早餐10元）") },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),  // 改为文本键盘
             textStyle = LocalTextStyle.current.copy(
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold
             ),
+            trailingIcon = {
+                IconButton(onClick = onVoiceInput) {
+                    Icon(
+                        imageVector = Icons.Default.Mic,
+                        contentDescription = "语音记账",
+                        tint = if (currentType == 0) ExpenseRed else IncomeGreen
+                    )
+                }
+            },
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = if (currentType == 0) ExpenseRed else IncomeGreen
             )

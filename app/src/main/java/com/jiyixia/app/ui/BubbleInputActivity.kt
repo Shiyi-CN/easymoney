@@ -4,18 +4,25 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -32,6 +39,8 @@ import com.jiyixia.app.ui.theme.WarningOrange
 import com.jiyixia.app.util.CategoryEmoji
 import com.jiyixia.app.domain.usecase.InputValidationUseCase
 import com.jiyixia.app.domain.usecase.SmartParseUseCase
+import com.jiyixia.app.util.KeywordMappingManager
+import com.jiyixia.app.ui.components.XfyunVoiceDialog
 import com.jiyixia.app.util.toCents
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -97,7 +106,8 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
         val parsed = SmartParseUseCase.parse(
             text = inputText,
             categoryNameToId = nameToId,
-            defaultCategoryId = defaultCategoryId
+            defaultCategoryId = defaultCategoryId,
+            keywordMappings = KeywordMappingManager.getAll()
         )
 
         if (parsed != null) {
@@ -115,6 +125,16 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
 
     // 保存记录
     var validationError by remember { mutableStateOf<String?>(null) }
+
+    // 语音记账：讯飞离线语音识别对话框
+    val inputFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    var showVoiceDialog by remember { mutableStateOf(false) }
+
+    // 启动语音记账
+    val startVoiceRecognition: () -> Unit = {
+        showVoiceDialog = true
+    }
 
     fun saveRecord() {
         val amount = parsedAmount.toDoubleOrNull() ?: return
@@ -185,12 +205,23 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
                 onValueChange = { inputText = it; validationError = null },
                 placeholder = { Text("午餐 38", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(inputFocusRequester),
                 shape = RoundedCornerShape(12.dp),
                 textStyle = LocalTextStyle.current.copy(
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Medium
-                )
+                ),
+                trailingIcon = {
+                    IconButton(onClick = { startVoiceRecognition() }) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "语音记账",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
             )
             Spacer(Modifier.height(16.dp))
 
@@ -318,5 +349,17 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
                 Text("取消", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+
+    // 讯飞离线语音识别对话框
+    if (showVoiceDialog) {
+        XfyunVoiceDialog(
+            onResult = { text ->
+                showVoiceDialog = false
+                inputText = text
+                validationError = null
+            },
+            onDismiss = { showVoiceDialog = false }
+        )
     }
 }

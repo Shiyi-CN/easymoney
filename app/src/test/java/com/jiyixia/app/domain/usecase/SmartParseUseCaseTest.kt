@@ -357,4 +357,126 @@ class SmartParseUseCaseTest {
         // 备注现在直接使用原始输入
         assertEquals("午餐38和同事聚餐", result!!.note)
     }
+
+    // ========== 时间识别（一木记账核心能力） ==========
+
+    @Test
+    fun `date offset - yesterday`() {
+        val result = SmartParseUseCase.parse("昨天吃饭花了50", categoryNameToId)
+        assertNotNull(result)
+        assertEquals(-1, result!!.dateOffset)
+    }
+
+    @Test
+    fun `date offset - day before yesterday`() {
+        val result = SmartParseUseCase.parse("前天打车20", categoryNameToId)
+        assertNotNull(result)
+        assertEquals(-2, result!!.dateOffset)
+    }
+
+    @Test
+    fun `date offset - tomorrow`() {
+        val result = SmartParseUseCase.parse("明天午餐15", categoryNameToId)
+        assertNotNull(result)
+        assertEquals(1, result!!.dateOffset)
+    }
+
+    @Test
+    fun `date offset - today`() {
+        val result = SmartParseUseCase.parse("今天早餐10", categoryNameToId)
+        assertNotNull(result)
+        assertEquals(0, result!!.dateOffset)
+    }
+
+    @Test
+    fun `date offset - 3 days ago`() {
+        val result = SmartParseUseCase.parse("大前天购物100", categoryNameToId)
+        assertNotNull(result)
+        assertEquals(-3, result!!.dateOffset)
+    }
+
+    @Test
+    fun `date offset - default when no time word`() {
+        val result = SmartParseUseCase.parse("午餐38", categoryNameToId)
+        assertNotNull(result)
+        assertEquals(0, result!!.dateOffset)
+    }
+
+    // ========== 自定义关键词（一木记账核心差异化功能） ==========
+
+    @Test
+    fun `custom keyword - maps dialect to category`() {
+        // "过早"是武汉方言，意为吃早餐，用户可绑定至"餐饮"
+        val mappings = mapOf("过早" to "餐饮")
+        val result = SmartParseUseCase.parse("过早15", categoryNameToId, keywordMappings = mappings)
+        assertNotNull(result)
+        assertEquals(1L, result!!.categoryId) // 餐饮
+        assertEquals(15.0, result.amount, 0.01)
+    }
+
+    @Test
+    fun `custom keyword - maps pet food to pet category`() {
+        val mappings = mapOf("猫粮" to "宠物")
+        val result = SmartParseUseCase.parse("猫粮50", categoryNameToId, keywordMappings = mappings)
+        assertNotNull(result)
+        assertEquals(11L, result!!.categoryId) // 宠物
+    }
+
+    @Test
+    fun `custom keyword - no mapping falls back to default`() {
+        // 没有自定义关键词时，"过早"不是内置关键词，应分到"其他"
+        val result = SmartParseUseCase.parse("过早15", categoryNameToId)
+        assertNotNull(result)
+        assertEquals(15L, result!!.categoryId) // 其他
+    }
+
+    @Test
+    fun `custom keyword - priority over built_in`() {
+        // 自定义关键词优先级高于内置关键词
+        val mappings = mapOf("打车" to "购物")  // 把"打车"重定向到"购物"
+        val result = SmartParseUseCase.parse("打车25", categoryNameToId, keywordMappings = mappings)
+        assertNotNull(result)
+        assertEquals(3L, result!!.categoryId) // 购物（自定义覆盖了内置的"交通"）
+    }
+
+    @Test
+    fun `custom keyword - longest match wins`() {
+        // 最长匹配优先："打车费"比"打车"更具体
+        val mappings = mapOf("打车" to "交通", "打车费" to "办公")
+        val result = SmartParseUseCase.parse("打车费30", categoryNameToId, keywordMappings = mappings)
+        assertNotNull(result)
+        assertEquals(12L, result!!.categoryId) // 办公（最长匹配）
+    }
+
+    // ========== 多数字取末位（一木记账解析边界规则） ==========
+
+    @Test
+    fun `multi number - takes last number`() {
+        // 一木记账规则：若短句含多个数字，仅提取最后一个作为金额
+        val result = SmartParseUseCase.parse("买菜15打车20", categoryNameToId)
+        assertNotNull(result)
+        assertEquals(20.0, result!!.amount, 0.01)
+    }
+
+    @Test
+    fun `multi number - takes last with currency suffix`() {
+        val result = SmartParseUseCase.parse("早餐10块午餐15块", categoryNameToId)
+        assertNotNull(result)
+        assertEquals(15.0, result!!.amount, 0.01)
+    }
+
+    @Test
+    fun `multi number - jiao fen mode unaffected`() {
+        // 角分模式"25块5"是一个完整金额，不受多数字取末位影响
+        val result = SmartParseUseCase.parse("打车25块5", categoryNameToId)
+        assertNotNull(result)
+        assertEquals(25.5, result!!.amount, 0.01)
+    }
+
+    @Test
+    fun `multi number - three numbers takes last`() {
+        val result = SmartParseUseCase.parse("早餐5午餐10晚餐15", categoryNameToId)
+        assertNotNull(result)
+        assertEquals(15.0, result!!.amount, 0.01)
+    }
 }

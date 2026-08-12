@@ -9,4 +9,19 @@
 .cxx
 local.properties
 /app/build
-JYX_v1.3.8.apk
+
+# APK 构建产物 - 不提交
+*.apk
+
+# 日志和临时文件
+*.log
+replay_pid*
+build_log.txt
+build_output.txt
+build_msc.bat
+
+# 签名凭据 - 切勿提交
+/keystore.properties
+/app/release-keystore.jks
+*.jks
+*.keystore

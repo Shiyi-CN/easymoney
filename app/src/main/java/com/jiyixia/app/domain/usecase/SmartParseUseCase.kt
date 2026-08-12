@@ -25,7 +25,8 @@ object SmartParseUseCase {
         val isExpense: Boolean,       // 是否为支出
         val confidence: Int,          // 置信度 0-100
         val isReimbursable: Boolean = false,      // 是否可报销
-        val reimbursementTarget: String = ""      // 报销对象
+        val reimbursementTarget: String = "",     // 报销对象
+        val dateOffset: Int = 0       // 相对今天的偏移天数（-3=大前天,-2=前天,-1=昨天,0=今天,1=明天,2=后天,3=大后天）
     )
 
     // ═══════════════════════════════════════════════════════════
@@ -158,14 +159,25 @@ object SmartParseUseCase {
     /**
      * 解析文本，返回金额 + 分类 + 备注
      *
-     * @param text 识别后的文本，如 "午餐 38 块"、"打车 25 块 5"
+     * 统一入口：语音输入、手动输入、通知自动记账都调用此 UseCase
+     *
+     * 参考方案（多方调研）：
+     * - 一木记账：自然语言解析"昨天吃饭花了50" + 自定义关键词"过早"→"早餐"
+     * - JioNLP：中文金额提取标准（支持中文数字、口语化、混合格式）
+     * - CSDN记账App：pending 待确认机制、事件驱动解耦
+     *
+     * @param text 识别后的文本，如 "午餐 38 块"、"打车 25 块 5"、"昨天吃饭花了50"
      * @param categoryNameToId 分类名称 → ID 的映射（由调用方提供）
      * @param defaultCategoryId 默认分类 ID（无法识别时使用）
+     * @param keywordMappings 用户自定义关键词映射（关键词 → 分类名），优先级最高。
+     *        参考一木记账的自定义关键词功能：用户可将"过早"绑定至"早餐"分类，
+     *        通过喂给系统个人习惯语料，建立高容错率的录入环境。
      */
     fun parse(
         text: String,
         categoryNameToId: Map<String, Long>,
-        defaultCategoryId: Long = 0L
+        defaultCategoryId: Long = 0L,
+        keywordMappings: Map<String, String> = emptyMap()
     ): ParsedResult? {
         if (text.isBlank()) return null
 
@@ -174,23 +186,30 @@ object SmartParseUseCase {
         // 1. 提取金额
         val amountResult = extractAmount(cleaned) ?: return null
 
-        // 2. 检测支出分类
-        val expenseCategory = findCategory(cleaned, expenseCategories)
+        // 1.1 提取时间偏移（一木记账核心能力："昨天吃饭花了50" → dateOffset = -1）
+        val dateOffset = extractDateOffset(cleaned)
 
-        // 3. 检测收入分类
+        // 2. 检测自定义关键词（用户配置的，优先级最高，参考一木记账）
+        //    例：用户配置"过早"→"餐饮"，则"过早 15" → 分类=餐饮
+        val customCategory = findCustomKeywordCategory(cleaned, keywordMappings)
+
+        // 3. 检测支出分类（自定义关键词优先于内置关键词）
+        val expenseCategory = customCategory ?: findCategory(cleaned, expenseCategories)
+
+        // 4. 检测收入分类（自定义关键词不覆盖收入识别，避免"报销"等被误映射）
         val incomeCategory = findCategory(cleaned, incomeCategories)
 
-        // 4. 判断是否包含"报销"关键词
+        // 5. 判断是否包含"报销"关键词
         val hasReimbursementKeyword = listOf("报销", "可报销", "能报销", "要报销").any { cleaned.contains(it) }
 
-        // 4.1 检测"XX公司/分公司/单位/部门"模式（自动识别为可报销）
+        // 5.1 检测"XX公司/分公司/单位/部门"模式（自动识别为可报销）
         val companyReimbursementResult = detectCompanyReimbursement(cleaned)
         val hasCompanyPattern = companyReimbursementResult.first
 
-        // 5. 明确的收入关键词（"到账"、"收入"、"收到"等），表示这是真正的收入而非可报销支出
+        // 6. 明确的收入关键词（"到账"、"收入"、"收到"等），表示这是真正的收入而非可报销支出
         val hasExplicitIncomeKeyword = listOf("到账", "收入", "收到", "入账", "进账").any { cleaned.contains(it) }
 
-        // 6. 报销关键词优先：如果有报销关键词且没有明确收入关键词，走支出+可报销路径
+        // 7. 报销关键词优先：如果有报销关键词且没有明确收入关键词，走支出+可报销路径
         //    例："报销 200" → 支出+可报销，而非收入
         //    例："报销到账 200" → 收入（有"到账"关键词）
         if (hasReimbursementKeyword && !hasExplicitIncomeKeyword) {
@@ -201,15 +220,16 @@ object SmartParseUseCase {
                 amountText = amountResult.text,
                 categoryName = category,
                 categoryId = categoryNameToId[category] ?: defaultCategoryId,
-                note = cleaned,  // 备注直接使用原始输入
+                note = cleanNote(cleaned, amountResult.matchedText),
                 isExpense = true,
                 confidence = 85,
                 isReimbursable = true,
-                reimbursementTarget = reimbursementResult.second
+                reimbursementTarget = reimbursementResult.second,
+                dateOffset = dateOffset
             )
         }
 
-        // 6.1 公司名模式：如果有"XX公司/分公司"模式且没有明确收入关键词，走支出+可报销路径
+        // 7.1 公司名模式：如果有"XX公司/分公司"模式且没有明确收入关键词，走支出+可报销路径
         if (hasCompanyPattern && !hasExplicitIncomeKeyword) {
             val category = expenseCategory ?: "其他"
             return ParsedResult(
@@ -217,15 +237,16 @@ object SmartParseUseCase {
                 amountText = amountResult.text,
                 categoryName = category,
                 categoryId = categoryNameToId[category] ?: defaultCategoryId,
-                note = cleaned,  // 备注直接使用原始输入
+                note = cleanNote(cleaned, amountResult.matchedText),
                 isExpense = true,
                 confidence = 80,
                 isReimbursable = true,
-                reimbursementTarget = companyReimbursementResult.second
+                reimbursementTarget = companyReimbursementResult.second,
+                dateOffset = dateOffset
             )
         }
 
-        // 7. 收入分类（如"工资"、"报销到账"等）
+        // 8. 收入分类（如"工资"、"报销到账"等）
         // 优先匹配收入分类，解决"红包"等歧义关键词问题
         if (incomeCategory != null) {
             return ParsedResult(
@@ -233,15 +254,16 @@ object SmartParseUseCase {
                 amountText = amountResult.text,
                 categoryName = incomeCategory,
                 categoryId = categoryNameToId[incomeCategory] ?: defaultCategoryId,
-                note = cleaned,  // 备注直接使用原始输入
+                note = cleanNote(cleaned, amountResult.matchedText),
                 isExpense = false,
                 confidence = 85,
                 isReimbursable = false,
-                reimbursementTarget = ""
+                reimbursementTarget = "",
+                dateOffset = dateOffset
             )
         }
 
-        // 8. 支出分类 + 报销关键词 = 支出+可报销
+        // 9. 支出分类 + 报销关键词 = 支出+可报销
         if (expenseCategory != null && hasReimbursementKeyword) {
             val reimbursementResult = detectReimbursement(cleaned)
             return ParsedResult(
@@ -249,41 +271,89 @@ object SmartParseUseCase {
                 amountText = amountResult.text,
                 categoryName = expenseCategory,
                 categoryId = categoryNameToId[expenseCategory] ?: defaultCategoryId,
-                note = cleaned,  // 备注直接使用原始输入
+                note = cleanNote(cleaned, amountResult.matchedText),
                 isExpense = true,
                 confidence = 85,
                 isReimbursable = true,
-                reimbursementTarget = reimbursementResult.second
+                reimbursementTarget = reimbursementResult.second,
+                dateOffset = dateOffset
             )
         }
 
-        // 9. 纯支出（没有报销关键词）
+        // 10. 纯支出（没有报销关键词）
         if (expenseCategory != null) {
             return ParsedResult(
                 amount = amountResult.value,
                 amountText = amountResult.text,
                 categoryName = expenseCategory,
                 categoryId = categoryNameToId[expenseCategory] ?: defaultCategoryId,
-                note = cleaned,  // 备注直接使用原始输入
+                note = cleanNote(cleaned, amountResult.matchedText),
                 isExpense = true,
                 confidence = 80,
                 isReimbursable = false,
-                reimbursementTarget = ""
+                reimbursementTarget = "",
+                dateOffset = dateOffset
             )
         }
 
-        // 10. 只识别到金额，分到"其他"
+        // 11. 只识别到金额，分到"其他"
         return ParsedResult(
             amount = amountResult.value,
             amountText = amountResult.text,
             categoryName = "其他",
             categoryId = categoryNameToId["其他"] ?: defaultCategoryId,
-            note = cleaned,
+            note = cleanNote(cleaned, amountResult.matchedText),
             isExpense = true,
             confidence = 50,
             isReimbursable = false,
-            reimbursementTarget = ""
+            reimbursementTarget = "",
+            dateOffset = dateOffset
         )
+    }
+
+    /**
+     * 提取时间偏移（相对今天）
+     * 一木记账核心能力：支持"昨天吃饭花了50"这类口语化时间表达
+     * @return 偏移天数（-3 到 +3），默认 0（今天）
+     */
+    private fun extractDateOffset(text: String): Int {
+        // 注意顺序：必须先检查"大前天/大后天"再检查"前天/后天"，否则会被部分匹配
+        return when {
+            text.contains("大前天") -> -3
+            text.contains("前天") -> -2
+            text.contains("昨天") -> -1
+            text.contains("大后天") -> 3
+            text.contains("后天") -> 2
+            text.contains("明天") -> 1
+            else -> 0  // "今天"或未识别都算今天
+        }
+    }
+
+    /**
+     * 查找自定义关键词匹配的分类（用户配置的，优先级最高）
+     * 参考一木记账的自定义关键词功能：用户可将"过早"绑定至"早餐/餐饮"
+     * @param text 输入文本
+     * @param keywordMappings 关键词 → 分类名 映射
+     * @return 匹配到的分类名，未匹配返回 null
+     */
+    private fun findCustomKeywordCategory(
+        text: String,
+        keywordMappings: Map<String, String>
+    ): String? {
+        if (keywordMappings.isEmpty()) return null
+        var bestCategory: String? = null
+        var bestLength = 0
+        for ((keyword, categoryName) in keywordMappings) {
+            if (keyword.isBlank() || categoryName.isBlank()) continue
+            if (text.contains(keyword)) {
+                // 最长匹配优先（与内置关键词一致）
+                if (keyword.length > bestLength) {
+                    bestCategory = categoryName
+                    bestLength = keyword.length
+                }
+            }
+        }
+        return bestCategory
     }
 
     /**
@@ -369,96 +439,156 @@ object SmartParseUseCase {
     //  金额提取
     // ═══════════════════════════════════════════════════════════
 
-    private data class AmountResult(val value: Double, val text: String)
+    private data class AmountResult(val value: Double, val text: String, val matchedText: String = "")
 
     private fun extractAmount(text: String): AmountResult? {
-        // 1. "X块Y" / "X块Y毛" 模式，如 "二十五块五" → 暂时只支持数字格式
-        //    先尝试中文数字 → 阿拉伯数字转换的简单模式
-        val cnToNum = mapOf(
-            "零" to 0, "一" to 1, "二" to 2, "两" to 2, "三" to 3,
-            "四" to 4, "五" to 5, "六" to 6, "七" to 7, "八" to 8, "九" to 9,
-            "十" to 10
-        )
+        // ═══════════════════════════════════════════════════════════
+        //  金额提取策略（参考一木记账 + JioNLP）
+        //  核心规则：若短句含多个数字，仅提取最后一个作为金额（一木记账解析边界）
+        //  例："买菜15打车20" → 取 20，而非 15
+        // ═══════════════════════════════════════════════════════════
 
-        // 2. 标准数字格式：匹配如 "38", "25.5", "128.50", "38元", "25块5", "38块"
-        val patterns = listOf(
-            // "25块5" / "25块5毛" / "25块5角"
-            Regex("""(\d+)\s*块\s*(\d+)"""),
-            // 阿拉伯数字+万/千：如 "1万", "2千", "1.5万"（优先于小数匹配）
-            Regex("""(\d+\.?\d*)\s*[万千]"""),
-            // "128.50" 或 "128.5"
-            Regex("""(\d+\.\d{1,2})"""),
-            // "38 元" / "38元" / "38块" (不带角分)
-            Regex("""(\d+)\s*[元块钱￥¥]"""),
-            // 纯数字 "38"（没有块/元后缀的数字）
-            Regex("""(?<![a-zA-Z0-9.])(\d+)(?![a-zA-Z0-9.])""")
-        )
+        // 0. 完整中文金额优先（支持角分）："二十九块伍毛一分" → 29.51
+        tryParseFullChineseAmount(text)?.let { return it }
 
-        for (pattern in patterns) {
-            val match = pattern.find(text)
-            if (match != null) {
-                val groups = match.groupValues
-                val matchedText = match.value
-                return when {
-                    // "25块5" → groups = ["25块5", "25", "5"]
-                    groups.size >= 3 && groups[1].isNotEmpty() && groups[2].isNotEmpty() -> {
-                        val main = groups[1].toDoubleOrNull() ?: continue
-                        val frac = groups[2].toDoubleOrNull() ?: continue
-                        val fracAdjusted = if (frac >= 10) frac / 100.0 else frac / 10.0
-                        val value = main + fracAdjusted
-                        AmountResult(value, "%.2f".format(value))
-                    }
-                    // 普通数字（可能带万/千单位）
-                    groups.size >= 2 -> {
-                        val value = groups[1].toDoubleOrNull() ?: continue
-                        // 检查是否带万/千单位
-                        val multiplier = when {
-                            matchedText.endsWith("万") -> 10000.0
-                            matchedText.endsWith("千") -> 1000.0
-                            else -> 1.0
-                        }
-                        val finalValue = value * multiplier
-                        AmountResult(finalValue, "%.2f".format(finalValue))
-                    }
-                    else -> continue
-                }
-            }
+        // 1. 角分模式（完整版，含"分"）：
+        //    "25块5毛1" → 25.51 / "25块5角1分" → 25.51 / "25元5角1分" → 25.51
+        val jiaoFenFullPattern = Regex("""(\d+)\s*[块元]\s*(\d+)\s*[毛角]\s*(\d+)\s*分?""")
+        jiaoFenFullPattern.find(text)?.let { match ->
+            val main = match.groupValues[1].toDoubleOrNull() ?: 0.0
+            val jiao = match.groupValues[2].toDoubleOrNull() ?: 0.0
+            val fen = match.groupValues[3].toDoubleOrNull() ?: 0.0
+            val value = main + jiao / 10.0 + fen / 100.0
+            return AmountResult(value, "%.2f".format(value), match.value)
         }
 
-        // 3. 尝试中文数字金额（简单版，只处理整数）
-        // "三十八" → 38
-        return tryParseChineseAmount(text)
+        // 1.1 只有角（无"分"）："25块5毛" / "25块5角" / "25块5" / "25块51"
+        val jiaoOnlyPattern = Regex("""(\d+)\s*[块元]\s*(\d+)\s*[毛角]?""")
+        jiaoOnlyPattern.find(text)?.let { match ->
+            val main = match.groupValues[1].toDoubleOrNull() ?: 0.0
+            val frac = match.groupValues[2].toDoubleOrNull() ?: 0.0
+            val fracAdjusted = if (frac >= 10) frac / 100.0 else frac / 10.0
+            val value = main + fracAdjusted
+            return AmountResult(value, "%.2f".format(value), match.value)
+        }
+
+        // 2. 带万/千单位的数字："1万" / "2千" / "1.5万"
+        //    多个时取最后一个（一木记账规则）
+        val wanQianPattern = Regex("""(\d+\.?\d*)\s*[万千]""")
+        val wanQianMatches = wanQianPattern.findAll(text).toList()
+        if (wanQianMatches.isNotEmpty()) {
+            val lastMatch = wanQianMatches.last()
+            val value = lastMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+            val multiplier = if (lastMatch.value.endsWith("万")) 10000.0 else 1000.0
+            val finalValue = value * multiplier
+            return AmountResult(finalValue, "%.2f".format(finalValue), lastMatch.value)
+        }
+
+        // 3. 小数格式："128.50" / "25.5" / "29.51"
+        //    多个时取最后一个
+        val decimalPattern = Regex("""(\d+\.\d{1,2})""")
+        val decimalMatches = decimalPattern.findAll(text).toList()
+        if (decimalMatches.isNotEmpty()) {
+            val lastMatch = decimalMatches.last()
+            val value = lastMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+            return AmountResult(value, "%.2f".format(value), lastMatch.value)
+        }
+
+        // 4. 带货币后缀的数字："38元" / "38块" / "38块钱" / "￥38"
+        //    多个时取最后一个（"买菜15块打车20块" → 取 20）
+        val currencyPattern = Regex("""(\d+)\s*[元块钱￥¥]""")
+        val currencyMatches = currencyPattern.findAll(text).toList()
+        if (currencyMatches.isNotEmpty()) {
+            val lastMatch = currencyMatches.last()
+            val value = lastMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+            return AmountResult(value, "%.2f".format(value), lastMatch.value)
+        }
+
+        // 5. 纯整数："38"（无任何后缀）
+        //    一木记账核心规则：多数字取末位（"买菜15打车20" → 取 20）
+        val pureNumberPattern = Regex("""(?<![a-zA-Z0-9.])(\d+)(?![a-zA-Z0-9.])""")
+        val pureMatches = pureNumberPattern.findAll(text).toList()
+        if (pureMatches.isNotEmpty()) {
+            val lastMatch = pureMatches.last()
+            val value = lastMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+            return AmountResult(value, "%.2f".format(value), lastMatch.value)
+        }
+
+        // 6. 尝试简单中文数字金额（无角分）："三十八" → 38
+        return tryParseSimpleChineseAmount(text)
     }
 
     /**
-     * 简单的中文数字金额解析
+     * 完整中文金额解析（支持角分）
+     * "二十九块伍毛一分" → 29.51
+     * "二十九元伍角一分" → 29.51
+     * "二十九块伍毛" → 29.5
+     * "三十八" → 38（无角分时返回 null，交给 tryParseSimpleChineseAmount）
+     */
+    private fun tryParseFullChineseAmount(text: String): AmountResult? {
+        val cnDigitChars = "零一二两三四五六七八九伍陆柒捌玖壹贰叁肆"
+        val cnUnitChars = "十百千万拾佰仟"
+        val allCnChars = cnDigitChars + cnUnitChars
+
+        // 模式1：完整角分 "二十九块伍毛一分" / "二十九元伍角一分"
+        val fullJiaoFen = Regex(
+            """([${allCnChars}]+)\s*[块元]\s*([${cnDigitChars}])\s*[毛角]\s*([${cnDigitChars}])\s*分?"""
+        )
+        fullJiaoFen.find(text)?.let { match ->
+            val yuan = chineseToArabic(match.groupValues[1]) ?: return null
+            val jiao = chineseDigitToInt(match.groupValues[2])
+            val fen = chineseDigitToInt(match.groupValues[3])
+            val value = yuan.toDouble() + jiao / 10.0 + fen / 100.0
+            return AmountResult(value, "%.2f".format(value), match.value)
+        }
+
+        // 模式2：只有角 "二十九块伍毛" / "二十九元伍角" / "二十九块伍"
+        val jiaoOnly = Regex(
+            """([${allCnChars}]+)\s*[块元]\s*([${cnDigitChars}])\s*[毛角]?"""
+        )
+        jiaoOnly.find(text)?.let { match ->
+            val yuan = chineseToArabic(match.groupValues[1]) ?: return null
+            val jiao = chineseDigitToInt(match.groupValues[2])
+            val value = yuan.toDouble() + jiao / 10.0
+            return AmountResult(value, "%.2f".format(value), match.value)
+        }
+
+        return null
+    }
+
+    /**
+     * 简单中文数字金额解析（无角分）
      * 支持 "三十八"、"一百二"、"一千五" 等常见口语表达
      */
-    private fun tryParseChineseAmount(text: String): AmountResult? {
+    private fun tryParseSimpleChineseAmount(text: String): AmountResult? {
+        val cnDigitChars = "零一二两三四五六七八九伍陆柒捌玖壹贰叁肆"
+        val cnUnitChars = "十百千万拾佰仟"
+        val allCnChars = cnDigitChars + cnUnitChars
+
         // 用正则找中文数字段
-        val cnNumPattern = Regex("""[零一二两三四五六七八九十百千万]+""")
+        val cnNumPattern = Regex("""[${allCnChars}]+""")
         val match = cnNumPattern.find(text) ?: return null
-        val cnStr = match.value
 
-        // 简单的转换：去掉"元/块"后的部分
-        val numStr = cnStr.replace(Regex("""[元块钱￥¥]"""), "")
-
-        val value = chineseToArabic(numStr) ?: return null
-
-        // 检查是否跟着"块5"这样的角分
-        val afterCnNum = text.substring(match.range.last + 1)
-        val jiaoFen = Regex("""块\s*(\d+)""").find(afterCnNum)
-        if (jiaoFen != null) {
-            val fen = jiaoFen.groupValues[1].toDoubleOrNull() ?: 0.0
-            val total = value + (if (fen >= 10) fen / 100.0 else fen / 10.0)
-            return AmountResult(total, "%.2f".format(total))
-        }
-
-        return AmountResult(value.toDouble(), "%.2f".format(value.toDouble()))
+        val value = chineseToArabic(match.value) ?: return null
+        return AmountResult(value.toDouble(), "%.2f".format(value.toDouble()), match.value)
     }
 
     /**
-     * 中文数字 → 阿拉伯数字（支持"三千五百二十一"→3521）
+     * 单个中文数字字符 → Int（支持大小写）
+     */
+    private fun chineseDigitToInt(ch: String): Int {
+        val map = mapOf(
+            "零" to 0, "一" to 1, "二" to 2, "三" to 3, "四" to 4,
+            "五" to 5, "六" to 6, "七" to 7, "八" to 8, "九" to 9,
+            "两" to 2,
+            "伍" to 5, "陆" to 6, "柒" to 7, "捌" to 8, "玖" to 9,
+            "壹" to 1, "贰" to 2, "叁" to 3, "肆" to 4
+        )
+        return map[ch] ?: 0
+    }
+
+    /**
+     * 中文数字 → 阿拉伯数字（支持"三千五百二十一"→3521，含大写数字）
      */
     private fun chineseToArabic(cn: String): Long? {
         if (cn.isEmpty()) return null
@@ -466,14 +596,17 @@ object SmartParseUseCase {
         val digitMap = mapOf(
             '零' to 0, '一' to 1, '二' to 2, '三' to 3, '四' to 4,
             '五' to 5, '六' to 6, '七' to 7, '八' to 8, '九' to 9,
-            '两' to 2
+            '两' to 2,
+            '伍' to 5, '陆' to 6, '柒' to 7, '捌' to 8, '玖' to 9,
+            '壹' to 1, '贰' to 2, '叁' to 3, '肆' to 4
         )
-        val unitMap = mapOf('十' to 10L, '百' to 100L, '千' to 1000L, '万' to 10000L)
+        val unitMap = mapOf(
+            '十' to 10L, '百' to 100L, '千' to 1000L, '万' to 10000L,
+            '拾' to 10L, '佰' to 100L, '仟' to 1000L
+        )
 
-        // 正确的中文数字解析逻辑
-        // 例："三千五百二十一" → 3521
         var result = 0L
-        var current = 0L  // 当前累计的数字（万以下的）
+        var current = 0L
 
         for (ch in cn) {
             when {
@@ -483,12 +616,10 @@ object SmartParseUseCase {
                 ch in unitMap -> {
                     val unit = unitMap[ch]!!
                     if (ch == '万') {
-                        // "万" 是大单位，将之前的结果和 current 都乘以万
                         result = (result + current) * unit
                         current = 0
                     } else {
-                        // 十/百/千：将 current 乘以单位加到 result
-                        if (current == 0L) current = 1L  // "十" = 10
+                        if (current == 0L) current = 1L
                         result += current * unit
                         current = 0
                     }
@@ -498,6 +629,28 @@ object SmartParseUseCase {
 
         result += current
         return if (result > 0) result else null
+    }
+
+    /**
+     * 从原始文本中剔除金额部分，生成干净的备注
+     * 例："午饭二十九块伍毛一分" → "午饭"
+     *     "午餐38" → "午餐"
+     *     "打车25块5毛1" → "打车"
+     */
+    private fun cleanNote(text: String, matchedAmountText: String): String {
+        if (matchedAmountText.isBlank()) return text
+
+        // 从原始文本中删除金额匹配到的部分
+        var note = text.replace(matchedAmountText, "")
+
+        // 清理多余的空格和首尾标点
+        note = note.trim()
+        note = note.replace(Regex("""^[\s,，。、！!?？]+|[\s,，。、！!?？]+$"""), "")
+
+        // 如果清洗后为空，返回原始文本（保留原始信息）
+        if (note.isBlank()) return text
+
+        return note
     }
 
     // ═══════════════════════════════════════════════════════════

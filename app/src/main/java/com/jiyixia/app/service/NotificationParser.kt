@@ -61,7 +61,12 @@ object NotificationParser {
         "积分兑换", "积分清零", "签到", "抽奖", "中奖", "免费领", "0元购", "0元领",
         "为你推荐", "猜你喜欢", "热门活动", "立即查看", "点击查看",
         "余额宝收益", "基金推荐", "理财产品", "保险推荐",
-        "推广", "广告", "推荐有礼", "福利", "赠送"
+        "推广", "广告", "推荐有礼", "福利", "赠送",
+        // 游戏/任务/等级类（防止游戏通知被误识别）
+        "积分", "天数", "等级", "经验", "升级", "任务", "成就",
+        "金币", "钻石", "体力", "活力", "关卡", "排行", "榜单",
+        // 提醒类（非消费）
+        "过期", "到期", "提醒", "更新", "版本", "公告", "通知提醒"
     )
 
     /**
@@ -158,14 +163,23 @@ object NotificationParser {
         }
 
         // 2. 根据包名选择解析模板
+        //    重要：模板解析失败时逐级回退，避免"一个都不记"
         val template = when {
-            content.packageName == "com.tencent.mm" -> parseWeChatPay(content)
-            content.packageName == "com.eg.android.AlipayGphone" -> parseAlipay(content)
+            content.packageName == "com.tencent.mm" -> {
+                // 微信：严格模板 → 通用 → 宽松（只要有¥金额）
+                parseWeChatPay(content) ?: parseGeneric(content) ?: parsePaymentAppLenient(content)
+            }
+            content.packageName == "com.eg.android.AlipayGphone" -> {
+                // 支付宝：严格模板 → 通用 → 宽松
+                parseAlipay(content) ?: parseGeneric(content) ?: parsePaymentAppLenient(content)
+            }
             content.packageName.startsWith("sms:") -> parseBankSms(content)
             else -> parseGeneric(content)
         }
 
         if (template == null || template.amount <= 0) {
+            Log.d(TAG, "所有解析模板均失败: pkg=${content.packageName}, " +
+                    "title=${content.title}, text=${content.text.take(60)}")
             return null
         }
 
@@ -351,6 +365,57 @@ object NotificationParser {
         )
     }
 
+    /**
+     * 支付App宽松解析（最后回退方案）
+     *
+     * 当微信/支付宝的严格模板和通用模板都失败时使用。
+     * 必须同时满足：包含支付确认词 + 能提取到带符号金额，才记录。
+     * 避免营销通知（积分/红包/天数提醒等）被误识别。
+     */
+    private fun parsePaymentAppLenient(content: NotificationContent): ParsedNotification? {
+        // 必须包含至少一个支付确认词，防止营销/积分/游戏类通知被误记
+        val hasPaymentConfirm = listOf(
+            "支付成功", "付款成功", "转账成功", "交易成功", "购买成功",
+            "支付完成", "付款完成", "转账完成", "交易完成",
+            "已支付", "已付款", "已扣款", "已转账",
+            "消费", "扣款", "支出", "付款", "支付", "转账"
+        ).any { content.allText.contains(it) }
+
+        if (!hasPaymentConfirm) {
+            Log.d(TAG, "宽松解析跳过（无支付确认词）: title=${content.title}, text=${content.text.take(50)}")
+            return null
+        }
+
+        // 从所有文本中提取金额
+        val amount = extractAmountStrict(content.allText) ?: return null
+        if (amount <= 0) return null
+
+        // 判断来源
+        val isWeChat = content.packageName == "com.tencent.mm"
+        val isAlipay = content.packageName == "com.eg.android.AlipayGphone"
+
+        val scene = when {
+            isWeChat -> "微信支付"
+            isAlipay -> "支付宝支付"
+            else -> "支付"
+        }
+
+        // 商户名：尝试从 title 或 text 提取
+        val merchantName = content.title
+            .takeIf { it.isNotBlank() && !it.contains("支付") && !it.contains("通知") }
+            ?: ""
+
+        Log.d(TAG, "宽松解析成功: scene=$scene, amount=$amount, title=${content.title}")
+
+        return ParsedNotification(
+            amount = amount,
+            merchantName = merchantName,
+            scene = scene,
+            isMarketing = false,
+            content = content
+        )
+    }
+
     // ═══════════════════════════════════════════════════════════
     //  严格金额提取（支持多种真实通知格式）
     // ═══════════════════════════════════════════════════════════
@@ -362,61 +427,111 @@ object NotificationParser {
      * 1. ¥/￥ 符号后取最大金额（避免"红包抵扣¥0.01，实付¥38.00"取到 0.01）
      * 2. 支持"支付38.00"、"消费38"等无"元"后缀的格式（支付宝/微信常见）
      * 3. 支持"实付¥38"、"实扣¥38"等动作词+¥组合
+     * 4. 支持千分位逗号格式（如"5,000.00元"），银行大额交易常见
      *
      * 不匹配：
      * - 纯数字（容易匹配到订单号、时间等）
      * - "X元"（容易匹配到"满100元减50元"）
      */
     private fun extractAmountStrict(text: String): Double? {
-        // 优先级 1：¥/￥ 符号 + 数字（取所有匹配中的最大值）
-        // 改进：原代码只取第一个匹配，如果"红包抵扣¥0.01"在"实付¥38.00"之前，会取到 0.01
-        val yenPattern = Regex("""[¥￥]\s*(\d+(?:\.\d{1,2})?)""")
-        val yenMatches = yenPattern.findAll(text).mapNotNull { match ->
-            match.groupValues[1].toDoubleOrNull()
-        }.filter { it > 0 && it < 1_000_000 }.toList()
+        // ═══════════════════════════════════════════════════════════
+        //  多候选金额评分系统（借鉴 Moneytask 项目）
+        //
+        //  核心思想：通知中可能有多个金额（如"交易金额42.10"和"可用额度￥58497.69"），
+        //  收集所有候选金额，根据上下文关键词打分，取得分最高的作为真实金额。
+        // ═══════════════════════════════════════════════════════════
 
-        if (yenMatches.isNotEmpty()) {
-            // 取最大金额（实付 > 红包抵扣）
-            return yenMatches.max()
-        }
+        // 统一金额正则：匹配 ¥数字、数字.元、数字元 等各种格式
+        val amountRegex = Regex("""[¥￥]?\s*([\d,]+(?:\.\d{1,2})?)\s*[元块]?""")
+        val candidates = mutableListOf<Pair<Double, Int>>() // (金额, 得分)
 
-        // 优先级 2："金额：XXX" / "金额 XXX" / "实付¥XXX" / "实扣¥XXX"
-        val amountLabelPattern = Regex(
-            """(?:金额|实付|实扣|应付|已付|消费金额|支付金额|交易金额)[：:\s]*[¥￥]?\s*(\d+(?:\.\d{1,2})?)"""
+        // 高权关键词（+50）：明确表示这是交易金额
+        val highWeight = listOf(
+            "实付", "实际支付", "支付金额", "付款金额", "订单金额",
+            "消费金额", "交易金额", "扣款金额", "转账金额"
         )
-        amountLabelPattern.find(text)?.let { match ->
-            val amount = match.groupValues[1].toDoubleOrNull()
-            if (amount != null && amount > 0 && amount < 1_000_000) return amount
-        }
-
-        // 优先级 3：动作词 + 数字 + 元（银行短信常见）
-        val actionPattern = Regex(
-            """(?:消费|支出|扣款|转账|支付|还款|存入|到账|入账|退款)[^\d]{0,10}(\d+(?:\.\d{1,2})?)\s*元"""
+        // 中权关键词（+20）：表示这是一笔消费
+        val midWeight = listOf(
+            "消费成功", "已成功付款", "支付成功", "付款成功",
+            "消费", "扣款", "支出", "支付", "付款", "转账"
         )
-        actionPattern.find(text)?.let { match ->
-            val amount = match.groupValues[1].toDoubleOrNull()
-            if (amount != null && amount > 0 && amount < 1_000_000) return amount
-        }
-
-        // 优先级 4：人民币 + 数字 + 元
-        val rmbPattern = Regex("""人民币\s*(\d+(?:\.\d{1,2})?)\s*元""")
-        rmbPattern.find(text)?.let { match ->
-            val amount = match.groupValues[1].toDoubleOrNull()
-            if (amount != null && amount > 0 && amount < 1_000_000) return amount
-        }
-
-        // 优先级 5：动作词 + 数字（无"元"后缀，支付宝/微信常见）
-        // 例如："在星巴克消费38.00"、"支付38"
-        // 注意：要求数字后跟小数点或非数字字符，避免匹配到订单号
-        val actionNoYuanPattern = Regex(
-            """(?:消费|支出|扣款|支付|付款)[^\d]{0,5}(\d+\.\d{1,2})"""
+        // 低权关键词（-20）：表示这不是交易金额
+        val lowWeight = listOf(
+            "优惠", "余额", "可用", "额度", "剩余", "红包",
+            "抵扣", "折扣", "积分", "订单号", "交易号", "流水号",
+            "尾号", "验证码", "可用额度"
         )
-        actionNoYuanPattern.find(text)?.let { match ->
-            val amount = match.groupValues[1].toDoubleOrNull()
-            if (amount != null && amount > 0 && amount < 1_000_000) return amount
+
+        for (match in amountRegex.findAll(text)) {
+            val rawValue = match.groupValues[1].replace(",", "")
+            val amount = rawValue.toDoubleOrNull() ?: continue
+
+            // 范围过滤：1 分 ~ 99,999,999.99 元
+            if (amount <= 0 || amount >= 1_000_000) continue
+
+            // 提取金额前 15 个字符的上下文
+            val prefix = text.substring(
+                (match.range.first - 15).coerceAtLeast(0),
+                match.range.first
+            )
+
+            // 时间格式排除：如果上下文包含时间格式，跳过
+            if (Regex("""\d{4}年|\d{1,2}:\d{2}|\d{4}-\d{2}-\d{2}""").containsMatchIn(prefix)) {
+                continue
+            }
+
+            // 检查是否带货币符号（¥/￥/元/块）
+            val matchStr = match.value
+            val hasCurrencySymbol = matchStr.contains("¥") || matchStr.contains("￥") ||
+                    matchStr.contains("元") || matchStr.contains("块")
+
+            // 打分
+            var score = 0
+            var hasHighOrMid = false
+            // 高权关键词
+            for (kw in highWeight) {
+                if (prefix.contains(kw)) { score += 50; hasHighOrMid = true; break }
+            }
+            // 中权关键词
+            for (kw in midWeight) {
+                if (prefix.contains(kw)) { score += 20; hasHighOrMid = true; break }
+            }
+            // 低权关键词（扣分）
+            var lowHits = 0
+            for (kw in lowWeight) {
+                if (prefix.contains(kw)) lowHits++
+            }
+            score -= lowHits * 20
+
+            // 带 ¥/￥/元 符号加分
+            if (matchStr.contains("¥") || matchStr.contains("￥") || matchStr.contains("元")) {
+                score += 3
+            }
+
+            // ★ 关键修复：无货币符号且无高/中权关键词 → 跳过
+            // 防止纯数字（如游戏中的"33"、营销通知中的"33积分"）被误识别为金额
+            if (!hasCurrencySymbol && !hasHighOrMid) {
+                Log.d(TAG, "跳过无符号无关键词候选: $amount (prefix=${prefix.takeLast(10)})")
+                continue
+            }
+
+            candidates.add(Pair(amount, score))
         }
 
-        return null
+        if (candidates.isEmpty()) return null
+
+        // 取得分最高的（得分相同取金额较大的）
+        val best = candidates.maxByOrNull { it.second } ?: return null
+
+        Log.d(TAG, "金额候选: ${candidates.size}个, 最优: ¥${best.first} (得分${best.second})")
+
+        // 如果最优候选得分为负，说明很可能是错误金额，返回 null
+        if (best.second < 0) {
+            Log.d(TAG, "所有候选得分均为负，可能是非交易通知")
+            return null
+        }
+
+        return best.first
     }
 
     // ═══════════════════════════════════════════════════════════

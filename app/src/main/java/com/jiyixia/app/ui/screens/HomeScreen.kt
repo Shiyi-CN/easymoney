@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
@@ -48,6 +50,8 @@ import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.data.ThemePreferences
 import com.jiyixia.app.service.PaymentNotificationListener
 import com.jiyixia.app.ui.theme.*
+import com.jiyixia.app.ui.components.XfyunVoiceDialog
+import com.jiyixia.app.ui.navigation.Screen
 import com.jiyixia.app.util.CategoryEmoji
 import com.jiyixia.app.util.toAmountString
 import com.jiyixia.app.viewmodel.HomeViewModel
@@ -104,10 +108,11 @@ private enum class FabState {
 // ══════════════════════════════════════════════════════════════════════════════
 //  HomeScreen
 // ══════════════════════════════════════════════════════════════════════════════
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     onNavigateToQuickRecord: () -> Unit = {},
+    onNavigateToQuickRecordWithVoice: (String) -> Unit = {},
     onNavigateToReimbursable: () -> Unit = {},
     vm: HomeViewModel = viewModel(
         factory = HomeViewModelFactory(LocalContext.current.applicationContext as Application)
@@ -161,6 +166,9 @@ fun HomeScreen(
     var fabState by remember { mutableStateOf(FabState.NORMAL) }
     var fabOffset by remember { mutableStateOf(Offset.Zero) }
     var isDragging by remember { mutableStateOf(false) }
+
+    // 长按 FAB 弹出语音识别对话框
+    var showVoiceDialog by remember { mutableStateOf(false) }
     val density = LocalDensity.current
 
     // 屏幕尺寸（用于边界计算）
@@ -430,10 +438,16 @@ fun HomeScreen(
                         }
                     )
                 }
-                .clickable {
-                    fabState = FabState.NORMAL
-                    onNavigateToQuickRecord()
-                },
+                .combinedClickable(
+                    onClick = {
+                        fabState = FabState.NORMAL
+                        onNavigateToQuickRecord()
+                    },
+                    onLongClick = {
+                        fabState = FabState.NORMAL
+                        showVoiceDialog = true
+                    }
+                ),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -454,6 +468,18 @@ fun HomeScreen(
                     vm.updateRecord(updatedRecord)
                     editingRecord = null
                 }
+            )
+        }
+
+        // 长按 FAB 弹出的语音识别对话框
+        if (showVoiceDialog) {
+            XfyunVoiceDialog(
+                onResult = { text ->
+                    showVoiceDialog = false
+                    // 语音识别完成后，带结果进入 QuickRecordScreen
+                    onNavigateToQuickRecordWithVoice(text)
+                },
+                onDismiss = { showVoiceDialog = false }
             )
         }
     }

@@ -1,6 +1,9 @@
 package com.jiyixia.app.service
 
+import android.content.Context
 import android.util.Log
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -13,23 +16,33 @@ import java.util.concurrent.ConcurrentHashMap
  *    - 一笔支付发生时，通知和屏幕可能同时触发，必须去重
  * 2. 去重键稳定：基于"金额 + 来源类型 + 时间窗口"，不依赖文本哈希
  *    - 屏幕文本含动态时间戳，文本哈希不稳定
- * 3. 时间窗口：2 分钟内同金额同来源只处理一次
- *    - 覆盖通知延迟 + 屏幕多次触发，同时避免误杀 5 分钟内的连续支付
- * 4. 精确金额去重：同来源 2 分钟内同金额只处理一次
- * 5. 跨 appSignature 去重：同一笔支付，通知+屏幕+短信可能同时触发，
- *    只要金额相同且时间窗口内，即视为重复（不区分 sourceType）
- * 6. recorded 标记：只有成功入库的检测才会阻止其他来源记录，
+ * 3. 同来源窗口 2 分钟：同来源同金额 2 分钟内只处理一次
+ *    - 覆盖通知延迟 + 屏幕多次触发，同时避免误杀连续支付
+ * 4. 跨来源窗口 5 分钟：不同来源同金额 5 分钟内只记录一次
+ *    - 用户可能在支付页面停留数分钟，通知先到、屏幕后触发
+ *    - 2 分钟太短会导致通知+屏幕双重记录
+ * 5. recorded 标记：只有成功入库的检测才会阻止其他来源记录，
  *    避免"通知被营销过滤拒绝 → 屏幕也被跨来源去重跳过"的双重拒绝问题
+ * 6. 持久化：APP 被杀重启后，去重缓存不丢失，防止重启后重复记录
  */
 object DedupManager {
 
     private const val TAG = "DedupManager"
 
-    /** 去重窗口：2 分钟（覆盖通知延迟，避免误杀连续支付） */
+    /** 同来源去重窗口：2 分钟 */
     private const val DEDUP_WINDOW_MS = 2 * 60 * 1000L
+
+    /** 跨来源去重窗口：5 分钟（用户可能在支付页停留数分钟） */
+    private const val CROSS_SOURCE_DEDUP_WINDOW_MS = 5 * 60 * 1000L
 
     /** 缓存上限：避免内存无限增长 */
     private const val MAX_CACHE_SIZE = 200
+
+    /** 持久化文件名 */
+    private const val PREFS_NAME = "dedup_cache"
+    private const val PREFS_KEY = "entries"
+
+    private var appContext: Context? = null
 
     /**
      * 去重条目
@@ -52,7 +65,17 @@ object DedupManager {
     private val dedupCache = ConcurrentHashMap<String, DedupEntry>()
 
     /**
-     * 检查是否为重复检测
+     * 初始化：加载持久化的去重缓存（APP 启动时调用）
+     * 防止 APP 被杀重启后，同一笔交易被重复记录
+     */
+    fun init(context: Context) {
+        appContext = context.applicationContext
+        loadFromPrefs()
+        Log.d(TAG, "DedupManager 初始化完成，加载 ${dedupCache.size} 条缓存")
+    }
+
+    /**
+     * 检查是否为重复检测（同来源去重，窗口 2 分钟）
      *
      * @param amount 金额（元）
      * @param sourceType 来源类型："notification" / "screen" / "sms"
@@ -80,6 +103,7 @@ object DedupManager {
 
         // 记录新条目（标记为未入库，等真正写入 DB 后才标记 recorded=true）
         dedupCache[key] = DedupEntry(amountCents, sourceType, appSignature, now, recorded = false)
+        saveToPrefs()
         return false
     }
 
@@ -89,6 +113,9 @@ object DedupManager {
      * 重要：只对 recorded=true 的条目判重。
      * 通知被营销过滤拒绝时，recorded 仍为 false，不会阻止屏幕检测记录。
      * 避免"通知被拒绝 → 屏幕也被跨来源去重跳过"的双重拒绝问题。
+     *
+     * 使用 5 分钟跨来源窗口（比同来源更长），因为用户可能在支付页面停留数分钟，
+     * 通知先到、屏幕后触发，2 分钟窗口会导致双重记录。
      *
      * @param amount 金额（元）
      * @param excludeSourceType 排除的来源类型（不检查此来源）
@@ -106,7 +133,7 @@ object DedupManager {
             if (entry.amount == amountCents &&
                 entry.recorded &&
                 entry.sourceType != excludeSourceType &&
-                now - entry.firstSeen < DEDUP_WINDOW_MS) {
+                now - entry.firstSeen < CROSS_SOURCE_DEDUP_WINDOW_MS) {
                 Log.d(TAG, "跨来源去重: amount=$amount, 已由 ${entry.sourceType} 记录入库, " +
                         "age=${now - entry.firstSeen}ms")
                 return true
@@ -135,6 +162,7 @@ object DedupManager {
         val key = "${amountCents}_${sourceType}_${appSignature}"
         val existing = dedupCache[key] ?: return
         dedupCache[key] = existing.copy(recorded = true)
+        saveToPrefs()
     }
 
     /**
@@ -143,9 +171,9 @@ object DedupManager {
     private fun cleanupExpired(now: Long) {
         if (dedupCache.size < MAX_CACHE_SIZE) return
 
-        // 超过上限时，清理所有过期条目
+        // 超过上限时，清理所有过期条目（用跨来源窗口的 2 倍作为清理阈值）
         val expiredKeys = dedupCache.entries
-            .filter { now - it.value.firstSeen > DEDUP_WINDOW_MS * 2 }
+            .filter { now - it.value.firstSeen > CROSS_SOURCE_DEDUP_WINDOW_MS * 2 }
             .map { it.key }
 
         expiredKeys.forEach { dedupCache.remove(it) }
@@ -164,10 +192,74 @@ object DedupManager {
      */
     fun clear() {
         dedupCache.clear()
+        saveToPrefs()
     }
 
     /**
      * 获取当前缓存大小（用于调试）
      */
     fun cacheSize(): Int = dedupCache.size
+
+    // ==================== 持久化 ====================
+
+    /**
+     * 从 SharedPreferences 加载去重缓存
+     * 只加载未过期的条目（跨来源窗口内）
+     */
+    private fun loadFromPrefs() {
+        val ctx = appContext ?: return
+        val now = System.currentTimeMillis()
+        try {
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val json = prefs.getString(PREFS_KEY, null) ?: return
+            val jsonArray = JSONArray(json)
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val firstSeen = obj.getLong("firstSeen")
+                // 只恢复跨来源窗口内的条目
+                if (now - firstSeen < CROSS_SOURCE_DEDUP_WINDOW_MS) {
+                    val key = obj.getString("key")
+                    val entry = DedupEntry(
+                        amount = obj.getLong("amount"),
+                        sourceType = obj.getString("sourceType"),
+                        appSignature = obj.getString("appSignature"),
+                        firstSeen = firstSeen,
+                        recorded = obj.getBoolean("recorded")
+                    )
+                    dedupCache[key] = entry
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "加载去重缓存失败，将使用空缓存", e)
+        }
+    }
+
+    /**
+     * 保存去重缓存到 SharedPreferences
+     * 只保存未过期的条目，避免文件无限增长
+     */
+    private fun saveToPrefs() {
+        val ctx = appContext ?: return
+        val now = System.currentTimeMillis()
+        try {
+            val jsonArray = JSONArray()
+            for ((key, entry) in dedupCache) {
+                // 只保存跨来源窗口内的条目
+                if (now - entry.firstSeen < CROSS_SOURCE_DEDUP_WINDOW_MS) {
+                    val obj = JSONObject()
+                    obj.put("key", key)
+                    obj.put("amount", entry.amount)
+                    obj.put("sourceType", entry.sourceType)
+                    obj.put("appSignature", entry.appSignature)
+                    obj.put("firstSeen", entry.firstSeen)
+                    obj.put("recorded", entry.recorded)
+                    jsonArray.put(obj)
+                }
+            }
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit().putString(PREFS_KEY, jsonArray.toString()).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "保存去重缓存失败", e)
+        }
+    }
 }

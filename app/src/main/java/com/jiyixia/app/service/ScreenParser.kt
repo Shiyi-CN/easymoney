@@ -133,10 +133,13 @@ object ScreenParser {
         }
 
         // 2. 必须包含支付成功确认词（屏幕检测比通知更严格）
+        //    转账场景包含"已收款"/"收款成功"（别人转给你，你点击收款）
         val paymentConfirmKeywords = listOf(
             "支付成功", "付款成功", "转账成功", "交易成功", "购买成功",
             "支付完成", "付款完成", "转账完成", "交易完成",
-            "已支付", "已付款", "已扣款"
+            "已支付", "已付款", "已扣款",
+            // 收款场景（别人转账给你，你点击收款）
+            "已收款", "收款成功", "已确认收款"
         )
         val hasPaymentSuccess = paymentConfirmKeywords.any { allText.contains(it) }
         if (!hasPaymentSuccess) {
