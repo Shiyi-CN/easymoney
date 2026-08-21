@@ -84,7 +84,10 @@ object NotificationParser {
     )
 
     /** 微信支付通知模板特征 */
-    private val WECHAT_PAY_TITLES = setOf("微信支付", "微信转账", "微信红包")
+    private val WECHAT_PAY_TITLES = setOf(
+        "微信支付", "微信转账", "微信红包", "微信收款",
+        "WeChat Pay", "转账通知", "收款通知"
+    )
 
     /** 支付宝通知模板特征 */
     private val ALIPAY_TITLES = setOf("支付宝", "支付宝通知", "支付宝账单", "蚂蚁财富", "余额宝")
@@ -156,8 +159,13 @@ object NotificationParser {
      * @return 解析结果，如果无法解析返回 null
      */
     fun extractTransaction(content: NotificationContent): ParsedNotification? {
+        // 判断是否为已知支付App（包名已确认来源，可放宽金额提取规则）
+        val isKnownPaymentApp = content.packageName == "com.tencent.mm" ||
+                content.packageName == "com.eg.android.AlipayGphone"
+
         // 1. 营销通知过滤（最高优先级）
-        if (isMarketing(content)) {
+        //    已知支付App放宽营销检测：必须有明确营销词且无支付确认词才拒绝
+        if (isMarketing(content, isKnownPaymentApp)) {
             Log.d(TAG, "营销通知拒绝: title=${content.title}, text=${content.text.take(50)}")
             return null
         }
@@ -166,7 +174,7 @@ object NotificationParser {
         //    重要：模板解析失败时逐级回退，避免"一个都不记"
         val template = when {
             content.packageName == "com.tencent.mm" -> {
-                // 微信：严格模板 → 通用 → 宽松（只要有¥金额）
+                // 微信：严格模板 → 通用 → 宽松
                 parseWeChatPay(content) ?: parseGeneric(content) ?: parsePaymentAppLenient(content)
             }
             content.packageName == "com.eg.android.AlipayGphone" -> {
@@ -189,15 +197,16 @@ object NotificationParser {
     /**
      * 营销通知检测
      *
-     * 关键改进：真实消费通知可能含"使用红包抵扣"、"满减活动"等词，
-     * 如果同时包含支付确认词（消费/支付/扣款/金额），则不视为营销。
+     * 关键改进：
+     * - 已知支付App（微信/支付宝）：只有明确营销词且无支付确认词时才拒绝
+     * - 未知App：保持严格，有营销词就拒绝
      *
      * 营销通知的特征：
      * - 含营销词（优惠券/红包雨/积分兑换等）
      * - 不含支付确认词
      * - 没有明确金额（或金额为 0.01/0.88 等极小值）
      */
-    private fun isMarketing(content: NotificationContent): Boolean {
+    private fun isMarketing(content: NotificationContent, isKnownPaymentApp: Boolean = false): Boolean {
         val checkText = content.allText
 
         // 含营销词时，检查是否同时含支付确认词
@@ -207,11 +216,17 @@ object NotificationParser {
             if (isRefund) return false
 
             // 例外2：同时含支付确认词 + 明确金额，视为消费（非营销）
-            // 例如："使用红包抵扣，实付¥38.00"
             val hasPaymentConfirm = PAYMENT_CONFIRM_KEYWORDS.any { checkText.contains(it) }
             val hasYenAmount = Regex("""[¥￥]\s*\d+\.\d{2}""").containsMatchIn(checkText)
             if (hasPaymentConfirm && hasYenAmount) {
                 Log.d(TAG, "含营销词但有支付确认+金额，视为消费: ${checkText.take(60)}")
+                return false
+            }
+
+            // 已知支付App：即使没有¥金额，只要有支付确认词也放行
+            // （微信/支付宝的通知格式多样，不能因为含"积分"等词就一刀切拒绝）
+            if (isKnownPaymentApp && hasPaymentConfirm) {
+                Log.d(TAG, "已知支付App含营销词但有支付确认词，放行: ${checkText.take(60)}")
                 return false
             }
 
@@ -234,9 +249,9 @@ object NotificationParser {
         val isOfficial = WECHAT_PAY_TITLES.any { content.title.contains(it) }
         if (!isOfficial) return null
 
-        // 从 bigText 或 text 提取金额
+        // 从 bigText 或 text 提取金额（已知支付App，放宽纯数字过滤）
         val amountText = content.bigText.ifBlank { content.text }
-        val amount = extractAmountStrict(amountText) ?: return null
+        val amount = extractAmountStrict(amountText, isKnownPaymentApp = true) ?: return null
 
         // 从 bigText 提取商户名
         val merchantName = extractMerchantFromWeChat(content.bigText, content.text)
@@ -269,9 +284,9 @@ object NotificationParser {
         val isOfficial = ALIPAY_TITLES.any { content.title.contains(it) }
         if (!isOfficial) return null
 
-        // 支付宝的金额通常在 text 中
+        // 支付宝的金额通常在 text 中（已知支付App，放宽纯数字过滤）
         val amountText = content.text.ifBlank { content.bigText }
-        val amount = extractAmountStrict(amountText) ?: return null
+        val amount = extractAmountStrict(amountText, isKnownPaymentApp = true) ?: return null
 
         // 从 text 提取商户名（多种格式）
         val merchantName = extractMerchantFromAlipay(content.text, content.bigText)
@@ -335,14 +350,18 @@ object NotificationParser {
      * 放宽确认词要求，支持美团/京东/滴滴等 app 的多种通知格式。
      */
     private fun parseGeneric(content: NotificationContent): ParsedNotification? {
-        // 必须包含支付确认词（放宽版）
+        // 必须包含支付确认词（放宽版，覆盖更多 App 格式）
         val hasPaymentConfirm = listOf(
             "支付成功", "付款成功", "转账成功", "交易成功", "购买成功", "下单成功",
             "支付完成", "付款完成", "转账完成", "交易完成",
             "已支付", "已付款", "已扣款", "已下单", "消费成功", "扣款成功",
             "支付¥", "支付￥", "付款¥", "付款￥",
             "行程费用", "车费支付", "已支付车费", "支付车费",
-            "费用已支付", "订单已支付"
+            "费用已支付", "订单已支付",
+            // 新增：覆盖更多格式
+            "实付", "实扣", "消费¥", "消费￥", "扣款¥", "扣款￥",
+            "付款金额", "支付金额", "交易金额", "消费金额",
+            "花费", "已花", "订单金额", "待付款", "需付款"
         ).any { content.allText.contains(it) }
 
         if (!hasPaymentConfirm) return null
@@ -373,26 +392,33 @@ object NotificationParser {
      * 避免营销通知（积分/红包/天数提醒等）被误识别。
      */
     private fun parsePaymentAppLenient(content: NotificationContent): ParsedNotification? {
-        // 必须包含至少一个支付确认词，防止营销/积分/游戏类通知被误记
-        val hasPaymentConfirm = listOf(
-            "支付成功", "付款成功", "转账成功", "交易成功", "购买成功",
-            "支付完成", "付款完成", "转账完成", "交易完成",
-            "已支付", "已付款", "已扣款", "已转账",
-            "消费", "扣款", "支出", "付款", "支付", "转账"
-        ).any { content.allText.contains(it) }
-
-        if (!hasPaymentConfirm) {
-            Log.d(TAG, "宽松解析跳过（无支付确认词）: title=${content.title}, text=${content.text.take(50)}")
-            return null
-        }
-
-        // 从所有文本中提取金额
-        val amount = extractAmountStrict(content.allText) ?: return null
-        if (amount <= 0) return null
-
         // 判断来源
         val isWeChat = content.packageName == "com.tencent.mm"
         val isAlipay = content.packageName == "com.eg.android.AlipayGphone"
+
+        // 已知支付App：如果标题是官方账号，直接放行（不强制要求支付确认词）
+        // 微信支付/支付宝的官方账号通知几乎都是交易相关
+        val isOfficialTitle = (isWeChat && WECHAT_PAY_TITLES.any { content.title.contains(it) }) ||
+                (isAlipay && ALIPAY_TITLES.any { content.title.contains(it) })
+
+        if (!isOfficialTitle) {
+            // 非官方账号标题：必须包含支付确认词
+            val hasPaymentConfirm = listOf(
+                "支付成功", "付款成功", "转账成功", "交易成功", "购买成功",
+                "支付完成", "付款完成", "转账完成", "交易完成",
+                "已支付", "已付款", "已扣款", "已转账",
+                "消费", "扣款", "支出", "付款", "支付", "转账"
+            ).any { content.allText.contains(it) }
+
+            if (!hasPaymentConfirm) {
+                Log.d(TAG, "宽松解析跳过（非官方标题且无支付确认词）: title=${content.title}, text=${content.text.take(50)}")
+                return null
+            }
+        }
+
+        // 从所有文本中提取金额（已知支付App，放宽纯数字过滤）
+        val amount = extractAmountStrict(content.allText, isKnownPaymentApp = true) ?: return null
+        if (amount <= 0) return null
 
         val scene = when {
             isWeChat -> "微信支付"
@@ -428,12 +454,13 @@ object NotificationParser {
      * 2. 支持"支付38.00"、"消费38"等无"元"后缀的格式（支付宝/微信常见）
      * 3. 支持"实付¥38"、"实扣¥38"等动作词+¥组合
      * 4. 支持千分位逗号格式（如"5,000.00元"），银行大额交易常见
+     * 5. 对已知支付App放宽纯数字过滤（包名已确认来源）
      *
      * 不匹配：
-     * - 纯数字（容易匹配到订单号、时间等）
+     * - 纯数字（容易匹配到订单号、时间等）—— 已知支付App除外
      * - "X元"（容易匹配到"满100元减50元"）
      */
-    private fun extractAmountStrict(text: String): Double? {
+    private fun extractAmountStrict(text: String, isKnownPaymentApp: Boolean = false): Double? {
         // ═══════════════════════════════════════════════════════════
         //  多候选金额评分系统（借鉴 Moneytask 项目）
         //
@@ -510,9 +537,15 @@ object NotificationParser {
 
             // ★ 关键修复：无货币符号且无高/中权关键词 → 跳过
             // 防止纯数字（如游戏中的"33"、营销通知中的"33积分"）被误识别为金额
+            // 例外：已知支付App（微信/支付宝）放行，因为包名已确认来源是支付App
+            // 微信支付通知的 text 经常是纯数字"38.00"（无¥符号）
             if (!hasCurrencySymbol && !hasHighOrMid) {
-                Log.d(TAG, "跳过无符号无关键词候选: $amount (prefix=${prefix.takeLast(10)})")
-                continue
+                if (isKnownPaymentApp) {
+                    Log.d(TAG, "已知支付App纯数字候选放行: $amount")
+                } else {
+                    Log.d(TAG, "跳过无符号无关键词候选: $amount (prefix=${prefix.takeLast(10)})")
+                    continue
+                }
             }
 
             candidates.add(Pair(amount, score))

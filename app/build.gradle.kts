@@ -22,8 +22,8 @@ android {
         applicationId = "com.jiyixia.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 43
-        versionName = "1.3.33"
+        versionCode = 45
+        versionName = "1.3.35"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -125,6 +125,9 @@ dependencies {
     // Glance (Widget)
     implementation("androidx.glance:glance-appwidget:1.0.0")
     implementation("androidx.glance:glance-material3:1.0.0")
+
+    // WorkManager（保活兜底）
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

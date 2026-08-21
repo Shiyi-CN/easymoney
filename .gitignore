@@ -13,6 +13,9 @@ local.properties
 # APK 构建产物 - 不提交
 *.apk
 
+# 讯飞 SDK 原始解压目录（库文件已在 app/libs 和 jniLibs 中）
+（语音输入SDK）*/
+
 # 日志和临时文件
 *.log
 replay_pid*

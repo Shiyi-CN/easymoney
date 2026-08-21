@@ -13,6 +13,7 @@ import com.jiyixia.app.util.CrashHandler
 import com.jiyixia.app.util.RuleManager
 import com.jiyixia.app.util.KeywordMappingManager
 import com.jiyixia.app.service.DedupManager
+import com.jiyixia.app.service.KeepAliveWorker
 import com.iflytek.cloud.SpeechConstant
 import com.iflytek.cloud.SpeechUtility
 
@@ -32,6 +33,8 @@ class JiYiXiaApp : Application() {
         // 初始化讯飞 MSC 语音听写 SDK
         initXfyunMSC()
         initPresetCategories()
+        // 调度 WorkManager 保活兜底（每 15 分钟检查服务是否存活）
+        KeepAliveWorker.schedule(this)
     }
 
     /**
