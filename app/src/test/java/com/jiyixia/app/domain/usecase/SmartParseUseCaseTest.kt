@@ -358,48 +358,24 @@ class SmartParseUseCaseTest {
         assertEquals("午餐38和同事聚餐", result!!.note)
     }
 
-    // ========== 时间识别（一木记账核心能力） ==========
+    // ========== 只记当天（日期偏移功能已按产品规则移除） ==========
 
     @Test
-    fun `date offset - yesterday`() {
+    fun `time word in input does not backdate - record is always today`() {
+        // 产品规则：只记当天的，之前漏记的不允许补选日期。
+        // "昨天"等时间词不再产生日期偏移，只作为普通文本保留在备注中，记录一律按今天入库。
+        // （cleanNote 会剔除金额文本，与 note keeps original input 系列测试的现状一致）
         val result = SmartParseUseCase.parse("昨天吃饭花了50", categoryNameToId)
         assertNotNull(result)
-        assertEquals(-1, result!!.dateOffset)
+        assertEquals("昨天吃饭花了", result!!.note)
+        assertEquals(50.0, result.amount, 0.01)
     }
 
     @Test
-    fun `date offset - day before yesterday`() {
-        val result = SmartParseUseCase.parse("前天打车20", categoryNameToId)
-        assertNotNull(result)
-        assertEquals(-2, result!!.dateOffset)
-    }
-
-    @Test
-    fun `date offset - tomorrow`() {
-        val result = SmartParseUseCase.parse("明天午餐15", categoryNameToId)
-        assertNotNull(result)
-        assertEquals(1, result!!.dateOffset)
-    }
-
-    @Test
-    fun `date offset - today`() {
-        val result = SmartParseUseCase.parse("今天早餐10", categoryNameToId)
-        assertNotNull(result)
-        assertEquals(0, result!!.dateOffset)
-    }
-
-    @Test
-    fun `date offset - 3 days ago`() {
-        val result = SmartParseUseCase.parse("大前天购物100", categoryNameToId)
-        assertNotNull(result)
-        assertEquals(-3, result!!.dateOffset)
-    }
-
-    @Test
-    fun `date offset - default when no time word`() {
+    fun `no time word parses normally`() {
         val result = SmartParseUseCase.parse("午餐38", categoryNameToId)
         assertNotNull(result)
-        assertEquals(0, result!!.dateOffset)
+        assertEquals(38.0, result!!.amount, 0.01)
     }
 
     // ========== 自定义关键词（一木记账核心差异化功能） ==========

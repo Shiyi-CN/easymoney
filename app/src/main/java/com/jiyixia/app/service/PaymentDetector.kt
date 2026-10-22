@@ -180,6 +180,15 @@ object PaymentDetector {
             return
         }
 
+        // 0. 只记当天的：检测时间不是今天的直接跳过
+        //    场景：监听服务重连时，系统会把通知栏里残留的旧通知重新投递过来（notification.when
+        //    是过去的时间），若不拦截会生成过去日期的记录（用户视为"补记漏记"，产品上不允许）。
+        if (!isToday(detectedTime)) {
+            addLog("[诊断] ⏭️ 非当天检测，跳过（只记当天）: source=$sourceType, app=$appSignature")
+            Log.d(TAG, "非当天检测，跳过: source=$sourceType, app=$appSignature")
+            return
+        }
+
         // 1. 智能去重
         // 1.1 同来源同金额 5 分钟内去重
         if (DedupManager.isDuplicate(amount, sourceType, appSignature)) {
@@ -287,6 +296,19 @@ object PaymentDetector {
                 addLog("错误: ${e.message}")
             }
         }
+    }
+
+    /**
+     * 判断时间戳是否为今天（本地时区）
+     *
+     * "只记当天"规则的核心判断：自动记账不允许产生过去日期的记录。
+     * 公开以便单元测试。
+     */
+    fun isToday(timestamp: Long): Boolean {
+        val target = java.util.Calendar.getInstance().apply { timeInMillis = timestamp }
+        val today = java.util.Calendar.getInstance()
+        return target.get(java.util.Calendar.YEAR) == today.get(java.util.Calendar.YEAR) &&
+                target.get(java.util.Calendar.DAY_OF_YEAR) == today.get(java.util.Calendar.DAY_OF_YEAR)
     }
 
     // ═══════════════════════════════════════════════════════════
