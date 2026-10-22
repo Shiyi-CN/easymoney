@@ -116,23 +116,7 @@ object ScreenParser {
         val allText = content.allText
         if (allText.isBlank()) return null
 
-        // 1. 营销内容过滤
-        val marketingKeywords = listOf(
-            "优惠券", "折扣", "满减", "限时", "抢购", "特惠",
-            "活动", "促销", "秒杀", "领红包", "红包雨",
-            "积分兑换", "签到", "抽奖", "免费领",
-            "为你推荐", "猜你喜欢"
-        )
-        if (marketingKeywords.any { allText.contains(it) }) {
-            // 例外：退款场景
-            val isRefund = allText.contains("退款") || allText.contains("退货")
-            if (!isRefund) {
-                Log.d(TAG, "屏幕含营销词，跳过")
-                return null
-            }
-        }
-
-        // 2. 必须包含支付成功确认词（屏幕检测比通知更严格）
+        // 支付成功确认词（屏幕检测比通知更严格）
         //    转账场景包含"已收款"/"收款成功"（别人转给你，你点击收款）
         val paymentConfirmKeywords = listOf(
             "支付成功", "付款成功", "转账成功", "交易成功", "购买成功",
@@ -141,6 +125,21 @@ object ScreenParser {
             // 收款场景（别人转账给你，你点击收款）
             "已收款", "收款成功", "已确认收款"
         )
+
+        // 1. 营销内容过滤（与 NotificationParser 共用同一份词表，避免两处维护不一致）
+        if (NotificationParser.MARKETING_KEYWORDS.any { allText.contains(it) }) {
+            // 例外1：退款场景
+            val isRefund = allText.contains("退款") || allText.contains("退货")
+            // 例外2：同时含支付确认词时按消费处理（与通知层 isMarketing 语义一致，
+            // 防止真实支付成功页因出现"积分/活动"等宽词被误拦）
+            val hasPaymentConfirm = paymentConfirmKeywords.any { allText.contains(it) }
+            if (!isRefund && !hasPaymentConfirm) {
+                Log.d(TAG, "屏幕含营销词，跳过")
+                return null
+            }
+        }
+
+        // 2. 必须包含支付成功确认词（屏幕检测比通知更严格）
         val hasPaymentSuccess = paymentConfirmKeywords.any { allText.contains(it) }
         if (!hasPaymentSuccess) {
             return null

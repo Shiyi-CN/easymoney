@@ -54,8 +54,10 @@ object NotificationParser {
      *
      * 注意：以下词在真实消费通知中也可能出现（如"使用红包抵扣"、"满减活动"），
      * 因此 isMarketing() 会结合支付确认词做例外判断。
+     *
+     * 公开共享：ScreenParser 屏幕解析使用同一份词表，避免两处维护不一致。
      */
-    private val MARKETING_KEYWORDS = listOf(
+    val MARKETING_KEYWORDS = listOf(
         "优惠券", "折扣", "满减", "满赠", "限时", "抢购", "特惠", "特价",
         "活动", "促销", "打折", "秒杀", "领红包", "抢红包", "红包雨",
         "积分兑换", "积分清零", "签到", "抽奖", "中奖", "免费领", "0元购", "0元领",
@@ -91,6 +93,14 @@ object NotificationParser {
 
     /** 支付宝通知模板特征 */
     private val ALIPAY_TITLES = setOf("支付宝", "支付宝通知", "支付宝账单", "蚂蚁财富", "余额宝")
+
+    /**
+     * 官方账号中的"子账号"关键词：标题命中这些词时不享受官方标题直接放行，
+     * 必须像普通通知一样携带支付确认词才可能被记录。
+     */
+    private val OFFICIAL_SUB_ACCOUNT_KEYWORDS = listOf(
+        "零钱", "零钱通", "理财", "余额宝", "余额+", "卡包", "分期", "信用", "基金", "保险"
+    )
 
     /** 银行短信发送方特征 */
     private val BANK_SMS_SENDERS = setOf(
@@ -361,7 +371,7 @@ object NotificationParser {
             // 新增：覆盖更多格式
             "实付", "实扣", "消费¥", "消费￥", "扣款¥", "扣款￥",
             "付款金额", "支付金额", "交易金额", "消费金额",
-            "花费", "已花", "订单金额", "待付款", "需付款"
+            "花费", "已花", "订单金额"
         ).any { content.allText.contains(it) }
 
         if (!hasPaymentConfirm) return null
@@ -398,8 +408,12 @@ object NotificationParser {
 
         // 已知支付App：如果标题是官方账号，直接放行（不强制要求支付确认词）
         // 微信支付/支付宝的官方账号通知几乎都是交易相关
-        val isOfficialTitle = (isWeChat && WECHAT_PAY_TITLES.any { content.title.contains(it) }) ||
-                (isAlipay && ALIPAY_TITLES.any { content.title.contains(it) })
+        // 例外：官方"子账号"（零钱/理财/卡包等）的通知多是收益提醒/资产变动，
+        // 不是消费交易，不能放行，仍要求支付确认词（v1.3.35 放宽引入的误记口子）
+        val isSubAccountTitle = OFFICIAL_SUB_ACCOUNT_KEYWORDS.any { content.title.contains(it) }
+        val isOfficialTitle = !isSubAccountTitle &&
+                ((isWeChat && WECHAT_PAY_TITLES.any { content.title.contains(it) }) ||
+                        (isAlipay && ALIPAY_TITLES.any { content.title.contains(it) }))
 
         if (!isOfficialTitle) {
             // 非官方账号标题：必须包含支付确认词
