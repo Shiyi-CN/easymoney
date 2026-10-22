@@ -25,7 +25,8 @@ object SmartParseUseCase {
         val isExpense: Boolean,       // 是否为支出
         val confidence: Int,          // 置信度 0-100
         val isReimbursable: Boolean = false,      // 是否可报销
-        val reimbursementTarget: String = ""      // 报销对象
+        val reimbursementTarget: String = "",     // 报销对象
+        val dateOffset: Int = 0       // 相对今天的偏移天数（-3=大前天,-2=前天,-1=昨天,0=今天,1=明天,2=后天）
     )
 
     // ═══════════════════════════════════════════════════════════
@@ -185,6 +186,9 @@ object SmartParseUseCase {
         // 1. 提取金额
         val amountResult = extractAmount(cleaned) ?: return null
 
+        // 1.1 提取时间偏移（补记能力："昨天吃饭花了50" → dateOffset = -1，调用方据此换算日期）
+        val dateOffset = extractDateOffset(cleaned)
+
         // 2. 检测自定义关键词（用户配置的，优先级最高，参考一木记账）
         //    例：用户配置"过早"→"餐饮"，则"过早 15" → 分类=餐饮
         val customCategory = findCustomKeywordCategory(cleaned, keywordMappings)
@@ -220,7 +224,8 @@ object SmartParseUseCase {
                 isExpense = true,
                 confidence = 85,
                 isReimbursable = true,
-                reimbursementTarget = reimbursementResult.second
+                reimbursementTarget = reimbursementResult.second,
+                dateOffset = dateOffset
             )
         }
 
@@ -236,7 +241,8 @@ object SmartParseUseCase {
                 isExpense = true,
                 confidence = 80,
                 isReimbursable = true,
-                reimbursementTarget = companyReimbursementResult.second
+                reimbursementTarget = companyReimbursementResult.second,
+                dateOffset = dateOffset
             )
         }
 
@@ -252,7 +258,8 @@ object SmartParseUseCase {
                 isExpense = false,
                 confidence = 85,
                 isReimbursable = false,
-                reimbursementTarget = ""
+                reimbursementTarget = "",
+                dateOffset = dateOffset
             )
         }
 
@@ -268,7 +275,8 @@ object SmartParseUseCase {
                 isExpense = true,
                 confidence = 85,
                 isReimbursable = true,
-                reimbursementTarget = reimbursementResult.second
+                reimbursementTarget = reimbursementResult.second,
+                dateOffset = dateOffset
             )
         }
 
@@ -283,7 +291,8 @@ object SmartParseUseCase {
                 isExpense = true,
                 confidence = 80,
                 isReimbursable = false,
-                reimbursementTarget = ""
+                reimbursementTarget = "",
+                dateOffset = dateOffset
             )
         }
 
@@ -297,8 +306,27 @@ object SmartParseUseCase {
             isExpense = true,
             confidence = 50,
             isReimbursable = false,
-            reimbursementTarget = ""
+            reimbursementTarget = "",
+            dateOffset = dateOffset
         )
+    }
+
+    /**
+     * 提取时间偏移（相对今天）
+     * 补记核心能力：支持"昨天吃饭花了50"这类口语化时间表达
+     * @return 偏移天数（-3 到 +3），默认 0（今天）
+     */
+    private fun extractDateOffset(text: String): Int {
+        // 注意顺序：必须先检查"大前天"再检查"前天"，否则会被部分匹配
+        return when {
+            text.contains("大前天") -> -3
+            text.contains("前天") -> -2
+            text.contains("昨天") -> -1
+            text.contains("明天") -> 1
+            text.contains("后天") -> 2
+            text.contains("大后天") -> 3
+            else -> 0  // "今天"或未识别都算今天
+        }
     }
 
     /**

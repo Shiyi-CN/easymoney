@@ -87,6 +87,8 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
     var parsedReimbursementTarget by remember { mutableStateOf("") }
     var parsedNote by remember { mutableStateOf("") }
     var isParsed by remember { mutableStateOf(false) }
+    // 语音偏移：解析出的"昨天/前天"等（0=今天），补记用
+    var parsedDateOffset by remember { mutableStateOf(0) }
 
     // 加载分类
     LaunchedEffect(Unit) {
@@ -117,6 +119,7 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
             parsedNote = parsed.note
             parsedIsReimbursable = parsed.isReimbursable
             parsedReimbursementTarget = parsed.reimbursementTarget
+            parsedDateOffset = parsed.dateOffset
             isParsed = true
         } else {
             isParsed = false
@@ -161,7 +164,11 @@ private fun BubbleInputScreen(onDismiss: () -> Unit) {
                     amount = amountCents,
                     categoryId = category.id,
                     note = parsedNote,
-                    date = System.currentTimeMillis(),
+                    // 语音含"昨天/前天"等偏移时补记到对应日期，否则记现在
+                    date = if (parsedDateOffset == 0) System.currentTimeMillis()
+                           else java.util.Calendar.getInstance()
+                               .apply { add(java.util.Calendar.DAY_OF_YEAR, parsedDateOffset) }
+                               .timeInMillis,
                     isReimbursable = parsedIsReimbursable,
                     reimbursementTarget = parsedReimbursementTarget
                 )

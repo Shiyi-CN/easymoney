@@ -25,11 +25,13 @@ import com.jiyixia.app.ui.theme.*
 import com.jiyixia.app.util.toAmountCents
 import com.jiyixia.app.util.toAmountNumber
 import com.jiyixia.app.util.UserLearningManager
+import java.util.Calendar
 import com.jiyixia.app.util.SubCategoryManager
 
 /**
  * 编辑记录对话框
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditRecordDialog(
     record: Record,
@@ -44,6 +46,10 @@ fun EditRecordDialog(
     var reimbursementTarget by remember { mutableStateOf(record.reimbursementTarget) }
     var isCategoryExpanded by remember { mutableStateOf(false) }
     var selectedType by remember { mutableIntStateOf(record.type) }  // 0=支出, 1=收入
+
+    // 补记：可修改记录日期（编辑漏记的账时改到正确的日子）
+    var selectedDate by remember { mutableLongStateOf(record.date) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     // 报销对象历史记录
     val context = LocalContext.current
@@ -220,6 +226,24 @@ fun EditRecordDialog(
                     textStyle = LocalTextStyle.current.copy(fontSize = 14.sp)
                 )
 
+                // 记账日期（可修改以补记过去的账）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Surface2)
+                        .clickable { showDatePicker = true }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "📅 ${editDateSdf.format(java.util.Date(selectedDate))}",
+                        fontSize = 14.sp
+                    )
+                    Text("点击修改日期 ▾", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+
                 // 报销开关
                 Row(
                     modifier = Modifier
@@ -285,6 +309,7 @@ fun EditRecordDialog(
                             amount = amountCents,
                             categoryId = selectedCategoryId,
                             note = noteText,
+                            date = selectedDate,
                             isReimbursable = finalReimbursable,
                             reimbursementTarget = finalTarget
                         )
@@ -327,4 +352,43 @@ fun EditRecordDialog(
             }
         }
     )
+
+    // 日期选择弹窗（修改记录日期以补记过去的账）
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = selectedDate
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    // DatePicker 返回 UTC 0 点毫秒，转成本地日期 + 原记录时分，避免时区偏一天
+                    datePickerState.selectedDateMillis?.let { utcMillis ->
+                        val utcCal = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+                            timeInMillis = utcMillis
+                        }
+                        val original = Calendar.getInstance().apply { timeInMillis = selectedDate }
+                        selectedDate = Calendar.getInstance().apply {
+                            set(
+                                utcCal.get(Calendar.YEAR), utcCal.get(Calendar.MONTH),
+                                utcCal.get(Calendar.DAY_OF_MONTH),
+                                original.get(Calendar.HOUR_OF_DAY), original.get(Calendar.MINUTE),
+                                original.get(Calendar.SECOND)
+                            )
+                            set(Calendar.MILLISECOND, 0)
+                        }.timeInMillis
+                    }
+                    showDatePicker = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+            }
+        ) {
+            DatePicker(state = datePickerState, title = null, headline = null)
+        }
+    }
 }
+
+/** 编辑弹窗的日期显示格式（如 "6月1日"） */
+private val editDateSdf = java.text.SimpleDateFormat("M月d日", java.util.Locale.getDefault())

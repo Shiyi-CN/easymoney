@@ -162,7 +162,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSelectedType(type: Int) { _selectedType.value = type }
 
-    fun addRecord(amount: Long, categoryId: Long, note: String, type: Int, isPendingConfirm: Boolean = false, confidence: Int = 100, isReimbursable: Boolean = false, reimbursementTarget: String = "") {
+    fun addRecord(amount: Long, categoryId: Long, note: String, type: Int, isPendingConfirm: Boolean = false, confidence: Int = 100, isReimbursable: Boolean = false, reimbursementTarget: String = "", date: Long? = null) {
         // 输入验证
         if (!InputValidationUseCase.isRecordValid(amount, categoryId, note)) {
             _errorMessage.value = "输入数据无效，请检查金额、分类和备注"
@@ -174,7 +174,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 repo.insertRecord(
                     Record(
                         type = type, amount = amount, categoryId = categoryId,
-                        note = note, date = System.currentTimeMillis(),
+                        note = note,
+                        // date 为空 = 现在；调用方可传入过去的时间实现补记
+                        date = date ?: System.currentTimeMillis(),
                         isPendingConfirm = isPendingConfirm, confidence = confidence,
                         isReimbursable = isReimbursable,
                         reimbursementTarget = reimbursementTarget

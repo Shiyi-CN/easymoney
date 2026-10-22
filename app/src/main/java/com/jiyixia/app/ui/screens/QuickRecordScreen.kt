@@ -46,6 +46,10 @@ import com.jiyixia.app.viewmodel.HomeViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 // 导入 HomeViewModelFactory
 import com.jiyixia.app.ui.screens.HomeViewModelFactory
@@ -83,6 +87,10 @@ fun QuickRecordScreen(
     var isSaving by remember { mutableStateOf(false) }
     var showSuccess by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
+
+    // 补记：手动选择的记账日期（null = 今天）；语音里的"昨天/前天"由 dateOffset 自动换算
+    var selectedDate by remember { mutableStateOf<Long?>(null) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     // 语音记账：讯飞离线语音识别对话框
     val amountFocusRequester = remember { FocusRequester() }
@@ -217,7 +225,9 @@ fun QuickRecordScreen(
                             note = currentParsed.note,
                             type = recordType,
                             isReimbursable = currentParsed.isReimbursable,
-                            reimbursementTarget = currentParsed.reimbursementTarget
+                            reimbursementTarget = currentParsed.reimbursementTarget,
+                            // 补记：手动选日期优先，其次语音"昨天/前天"偏移
+                            date = resolveRecordDate(selectedDate, currentParsed.dateOffset)
                         )
 
                         // 记录成功后，更新当前类型（下一笔自动跟上）
@@ -298,6 +308,75 @@ fun QuickRecordScreen(
                 onVoiceInput = { startVoiceRecognition() },
                 focusRequester = amountFocusRequester
             )
+
+            // 补记日期入口：默认今天，点击可选过去日期补记漏掉的账
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Surface2)
+                    .clickable { showDatePicker = true }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("📅", fontSize = 15.sp)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = selectedDate?.let { "补记：${dispSdf.format(Date(it))}" } ?: "记账日期：今天",
+                    fontSize = 13.sp,
+                    color = if (selectedDate != null) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (selectedDate != null) FontWeight.SemiBold else FontWeight.Normal
+                )
+                Spacer(Modifier.weight(1f))
+                if (selectedDate != null) {
+                    Text(
+                        "恢复今天",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { selectedDate = null }
+                    )
+                } else {
+                    Text("点击选择 ▾", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            // 补记日期选择弹窗（只能选今天及以前——补记过去的账）
+            if (showDatePicker) {
+                val datePickerState = rememberDatePickerState(
+                    initialSelectedDateMillis = selectedDate ?: System.currentTimeMillis()
+                )
+                DatePickerDialog(
+                    onDismissRequest = { showDatePicker = false },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            // DatePicker 返回 UTC 0 点毫秒，需转成本地日期 + 当前时分，否则时区下会偏一天
+                            datePickerState.selectedDateMillis?.let { utcMillis ->
+                                val utcCal = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+                                    timeInMillis = utcMillis
+                                }
+                                val now = Calendar.getInstance()
+                                selectedDate = Calendar.getInstance().apply {
+                                    set(
+                                        utcCal.get(Calendar.YEAR), utcCal.get(Calendar.MONTH),
+                                        utcCal.get(Calendar.DAY_OF_MONTH),
+                                        now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE),
+                                        now.get(Calendar.SECOND)
+                                    )
+                                    set(Calendar.MILLISECOND, 0)
+                                }.timeInMillis
+                            }
+                            showDatePicker = false
+                        }) { Text("确定") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+                    }
+                ) {
+                    DatePicker(state = datePickerState, title = null, headline = null)
+                }
+            }
 
             Spacer(Modifier.height(24.dp))
 
@@ -382,7 +461,9 @@ fun QuickRecordScreen(
                                         note = parsed.note,
                                         type = recordType,
                                         isReimbursable = parsed.isReimbursable,
-                                        reimbursementTarget = parsed.reimbursementTarget
+                                        reimbursementTarget = parsed.reimbursementTarget,
+                                        // 补记：手动选日期优先，其次语音"昨天/前天"偏移
+                                        date = resolveRecordDate(selectedDate, parsed.dateOffset)
                                     )
 
                                     // 记录成功后，更新当前类型（下一笔自动跟上）
@@ -424,6 +505,21 @@ fun QuickRecordScreen(
             onDismiss = { showVoiceDialog = false }
         )
     }
+}
+
+/** 补记日期显示格式（如 "6月1日"） */
+private val dispSdf = SimpleDateFormat("M月d日", Locale.getDefault())
+
+/**
+ * 解析最终记账日期
+ * @param selectedDate 手动选择的补记日期（已含当前时分）
+ * @param dateOffset 语音解析出的偏移（-1=昨天等）；手动选择优先
+ * @return null = 记当前时间
+ */
+private fun resolveRecordDate(selectedDate: Long?, dateOffset: Int): Long? {
+    if (selectedDate != null) return selectedDate
+    if (dateOffset == 0) return null
+    return Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, dateOffset) }.timeInMillis
 }
 
 /**
