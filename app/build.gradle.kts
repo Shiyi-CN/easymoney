@@ -22,8 +22,8 @@ android {
         applicationId = "com.jiyixia.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 45
-        versionName = "1.3.35"
+        versionCode = 47
+        versionName = "1.3.37"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
