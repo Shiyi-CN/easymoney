@@ -109,7 +109,7 @@ object SubCategoryManager {
     /**
      * 智能建议：从备注中提取可能的细分标签
      */
-    fun suggestSubCategory(note: String, categoryName: String): String? {
+    fun suggestSubCategory(note: String): String? {
         if (note.isBlank()) return null
 
         // 移除数字和常见单位

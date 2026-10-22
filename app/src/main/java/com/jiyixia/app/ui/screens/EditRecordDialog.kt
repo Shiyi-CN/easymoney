@@ -308,7 +308,7 @@ fun EditRecordDialog(
                         // 智能新增细分标签：从备注中提取可能的细分标签
                         val selectedCategoryName = categories.find { it.id == selectedCategoryId }?.name ?: ""
                         if (selectedCategoryName.isNotBlank() && noteText.isNotBlank()) {
-                            val suggestedSub = SubCategoryManager.suggestSubCategory(noteText, selectedCategoryName)
+                            val suggestedSub = SubCategoryManager.suggestSubCategory(noteText)
                             if (suggestedSub != null) {
                                 SubCategoryManager.addSubCategory(context, selectedCategoryName, suggestedSub)
                             }

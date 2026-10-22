@@ -450,7 +450,6 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadTrendData() {
         viewModelScope.launch {
             val sdf = java.text.SimpleDateFormat("M月", java.util.Locale.getDefault())
-            val cal = java.util.Calendar.getInstance()
             val result = mutableListOf<MonthTrendData>()
 
             // 从当前月往前数 6 个月
