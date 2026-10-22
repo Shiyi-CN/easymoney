@@ -1,9 +1,14 @@
 package com.jiyixia.app.ui.screens
 
+import android.Manifest
 import android.app.Application
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -127,11 +132,48 @@ fun HomeScreen(
     var listenerAuthorized by remember { mutableStateOf(isNotificationListenerEnabled(context)) }
     var listenerConnected by remember { mutableStateOf(PaymentNotificationListener.isServiceConnected) }
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+
+    // Snackbar支持
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+    // Android 13+ 通知显示权限申请：检测到支付后需要弹"已记账"确认通知，
+    // 未授予时通知弹不出来，用户会误以为自动记账没工作。
+    // 触发时机：用户刚完成通知监听授权回到 App（此时授权意愿最强，只弹一次）。
+    val notifPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            // 拒绝后记录标记，之后不再主动弹（可在设置页手动开启）
+            context.getSharedPreferences("auto_bookkeeping", android.content.Context.MODE_PRIVATE)
+                .edit().putBoolean("notification_perm_declined", true).apply()
+        }
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                listenerAuthorized = isNotificationListenerEnabled(context)
-                listenerConnected = PaymentNotificationListener.isServiceConnected
+                val newAuthorized = isNotificationListenerEnabled(context)
+                val newConnected = PaymentNotificationListener.isServiceConnected
+
+                // ① 服务恢复正反馈：上次是"已授权但断开"，本次回来已连接 → 确认修复成功
+                if (listenerAuthorized && !listenerConnected && newAuthorized && newConnected) {
+                    scope.launch { snackbarHostState.showSnackbar("自动记账已恢复 ✓") }
+                }
+
+                // ② 刚授权通知监听（未授权 → 已授权）→ 顺带申请通知显示权限
+                if (!listenerAuthorized && newAuthorized &&
+                    Build.VERSION.SDK_INT >= 33 &&
+                    context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED &&
+                    !context.getSharedPreferences("auto_bookkeeping", android.content.Context.MODE_PRIVATE)
+                        .getBoolean("notification_perm_declined", false)
+                ) {
+                    notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+
+                listenerAuthorized = newAuthorized
+                listenerConnected = newConnected
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -142,10 +184,6 @@ fun HomeScreen(
 
     // 编辑记录状态
     var editingRecord by remember { mutableStateOf<Record?>(null) }
-
-    // Snackbar支持
-    val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
 
     // 错误信息订阅
     val errorMessage by vm.errorMessage.collectAsState()
