@@ -133,6 +133,12 @@ interface RecordDao {
     @Query("SELECT COUNT(*) FROM records WHERE date >= :dayStart AND date < :dayEnd")
     suspend fun getRecordCountByDay(dayStart: Long, dayEnd: Long): Int
 
+    // ── 核对模式（无障碍屏幕通道）──
+
+    /** 按金额查找时间窗口内的最近一条记录（屏幕核对用：同金额 ±15 分钟视为已核对） */
+    @Query("SELECT * FROM records WHERE amount = :amountCents AND date BETWEEN :start AND :end ORDER BY date DESC LIMIT 1")
+    suspend fun findRecentByAmount(amountCents: Long, start: Long, end: Long): Record?
+
     // ── 搜索/筛选 ──
 
     /** 搜索记录（支持金额范围、分类、关键词、日期范围） */

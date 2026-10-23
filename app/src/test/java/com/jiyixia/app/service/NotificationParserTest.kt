@@ -498,5 +498,108 @@ class NotificationParserTest {
         assertNotNull(result)
         assertEquals(38.00, result!!.amount, 0.001)
     }
+
+    // ========== 信号分级（支柱4）与动作锚点（支柱1） ==========
+
+    @Test
+    fun `微信官方模板命中应为强信号`() {
+        val content = NotificationParser.NotificationContent(
+            title = "微信支付",
+            subText = "",
+            text = "¥38.00",
+            bigText = "金额：¥38.00",
+            summaryText = "",
+            textLines = emptyList(),
+            packageName = "com.tencent.mm",
+            allText = "微信支付 ¥38.00 金额：¥38.00"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull(result)
+        assertEquals(NotificationParser.Signal.STRONG, result!!.signal)
+    }
+
+    @Test
+    fun `通用解析命中应为弱信号`() {
+        val content = NotificationParser.NotificationContent(
+            title = "美团外卖",
+            subText = "",
+            text = "支付成功 ¥25.50",
+            bigText = "",
+            summaryText = "",
+            textLines = emptyList(),
+            packageName = "com.sankuai.meituan.takeoutnew",
+            allText = "美团外卖 支付成功 ¥25.50"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull(result)
+        assertEquals(NotificationParser.Signal.WEAK, result!!.signal)
+    }
+
+    @Test
+    fun `银行短信应为强信号`() {
+        val content = NotificationParser.parseSms(
+            sender = "95588",
+            body = "【工商银行】您尾号1234信用卡于06月21日12:30在星巴克消费人民币38.00元"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull(result)
+        assertEquals(NotificationParser.Signal.STRONG, result!!.signal)
+    }
+
+    @Test
+    fun `微信收款场景应解析为收款`() {
+        // 场景：别人转账给你，微信收款通知 → 应走收款模板，金额从"到账¥"锚点提取
+        val content = NotificationParser.NotificationContent(
+            title = "微信支付",
+            subText = "",
+            text = "收款到账 ¥88.00",
+            bigText = "",
+            summaryText = "",
+            textLines = emptyList(),
+            packageName = "com.tencent.mm",
+            allText = "微信支付 收款到账 ¥88.00"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull("微信收款通知应被解析", result)
+        assertEquals(88.00, result!!.amount, 0.001)
+        assertEquals("微信收款", result.scene)
+        assertEquals(NotificationParser.Signal.STRONG, result.signal)
+    }
+
+    @Test
+    fun `微信红包领取场景应解析`() {
+        val content = NotificationParser.NotificationContent(
+            title = "微信红包",
+            subText = "",
+            text = "已领取红包，金额：¥8.88",
+            bigText = "",
+            summaryText = "",
+            textLines = emptyList(),
+            packageName = "com.tencent.mm",
+            allText = "微信红包 已领取红包，金额：¥8.88"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull("微信红包通知应被解析", result)
+        assertEquals(8.88, result!!.amount, 0.001)
+        assertEquals("微信红包", result.scene)
+    }
+
+    @Test
+    fun `微信订单号不应被锚点提取为金额`() {
+        // 金额必须跟在动作锚点后：订单号里的数字即使出现在官方通知里也不应被取到
+        val content = NotificationParser.NotificationContent(
+            title = "微信支付",
+            subText = "",
+            text = "订单号20260621123045678 支付¥38.00",
+            bigText = "",
+            summaryText = "",
+            textLines = emptyList(),
+            packageName = "com.tencent.mm",
+            allText = "微信支付 订单号20260621123045678 支付¥38.00"
+        )
+        val result = NotificationParser.extractTransaction(content)
+        assertNotNull(result)
+        assertEquals("应从'支付¥'锚点提取38.00，而非订单号", 38.00, result!!.amount, 0.001)
+    }
 }
 

@@ -194,6 +194,32 @@ fun HomeScreen(
         }
     }
 
+    // ── 每日对账（支柱5）：每天首次打开 App，若有待确认的自动记账则弹窗提醒核对 ──
+    // 低成本兜底所有漏网场景：漏了什么、错了什么，每天有人对账，用户心里有底。
+    var showDailyReconcile by remember { mutableStateOf(false) }
+    LaunchedEffect(uiState.pendingCount) {
+        if (uiState.pendingCount <= 0) return@LaunchedEffect
+        val prefs = context.getSharedPreferences("auto_bookkeeping", android.content.Context.MODE_PRIVATE)
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        if (prefs.getString("daily_reconcile_date", null) != today) {
+            prefs.edit().putString("daily_reconcile_date", today).apply()
+            showDailyReconcile = true
+        }
+    }
+
+    if (showDailyReconcile) {
+        AlertDialog(
+            onDismissRequest = { showDailyReconcile = false },
+            title = { Text("每日对账") },
+            text = {
+                Text("今天有 ${uiState.pendingCount} 笔自动记账待确认。\n\n黄色标记的记录可在下方列表中逐笔确认或删除，确保没有漏记、错记。")
+            },
+            confirmButton = {
+                TextButton(onClick = { showDailyReconcile = false }) { Text("知道了") }
+            }
+        )
+    }
+
     // 撤销删除的逻辑
     var pendingDeleteRecord by remember { mutableStateOf<Record?>(null) }
 

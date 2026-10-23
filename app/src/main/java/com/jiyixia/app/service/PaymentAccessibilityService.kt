@@ -6,13 +6,18 @@ import android.view.accessibility.AccessibilityEvent
 import com.jiyixia.app.BuildConfig
 
 /**
- * 无障碍支付检测服务（重构版）
+ * 无障碍支付核对服务（重构版，核对模式）
  *
- * 改进点：
+ * 双通道关系重定义（支柱4）：通知 = 发现 + 解析（主通道）；
+ * 无障碍 = 只在用户主动打开支付 App 时核对（低频辅助），不再从屏幕直接入库。
+ * 原因：屏幕文本杂乱是"乱记录"重灾区，主动解析支付页面还有风控风险。
+ *
+ * 流程：
  * 1. 页面停留检测：支付成功页需稳定 3 秒才触发，避免滑过页面误触发
- * 2. 节流延长到 5 秒：避免同一页面多次触发
- * 3. 使用 ScreenParser 结构化解析：节点深度限制 + 文本过滤
- * 4. 委托给 PaymentDetector 统一处理：共享去重和分类逻辑
+ * 2. 节流 5 秒：避免同一页面多次触发
+ * 3. ScreenParser 结构化解析出支付金额后，与 ±15 分钟内的记账记录核对：
+ *    - 有同金额记录 → 诊断日志"已核对"
+ *    - 没有 → 诊断日志提示手动补记（通知可能未送达）
  *
  * 隐私保护：
  * - 只处理支付相关 app 的事件（通过包名过滤）
@@ -94,7 +99,7 @@ class PaymentAccessibilityService : AccessibilityService() {
      *
      * 采用"页面停留检测"策略：
      * 1. 首次检测到支付成功关键词 → 记录为"待确认"，3 秒后再次检查
-     * 2. 3 秒后仍在同一页面 → 确认为真实支付场景，触发记录
+     * 2. 3 秒后仍在同一页面 → 确认为真实支付页，进入核对（不直接入库）
      * 3. 3 秒内页面切换 → 取消，避免误触发
      *
      * 这样可以避免：
@@ -155,14 +160,15 @@ class PaymentAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // 停留时间足够，确认为真实支付场景
+            // 停留时间足够，确认为真实支付页，进入核对
             // 清除待确认状态，避免重复触发
             pendingPaymentPages.remove(packageName)
 
-            PaymentDetector.addDiagnosticLog("[A11y] ✅ 确认支付页，触发检测: pkg=$packageName, dwell=${dwellTime}ms")
+            PaymentDetector.addDiagnosticLog("[A11y] ✅ 确认支付页，进入核对: pkg=$packageName, dwell=${dwellTime}ms")
 
-            // 委托给 PaymentDetector 处理（包含结构化解析、去重、场景识别）
-            PaymentDetector.processScreen(
+            // 核对模式：不再从屏幕直接入库，只与通知通道的记账记录核对
+            // （详见 PaymentDetector.verifyScreen 注释）
+            PaymentDetector.verifyScreen(
                 rootNode = rootNode,
                 packageName = packageName,
                 context = applicationContext

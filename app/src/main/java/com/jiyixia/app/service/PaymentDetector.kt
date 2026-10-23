@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.jiyixia.app.JiYiXiaApp
 import com.jiyixia.app.data.entity.Record
 import com.jiyixia.app.ui.MainActivity
+import com.jiyixia.app.util.LearningQueue
 import com.jiyixia.app.util.RuleManager
 import com.jiyixia.app.util.UserLearningManager
 import com.jiyixia.app.util.toCents
@@ -30,7 +31,7 @@ import kotlinx.coroutines.launch
  *
  * 三个检测层共享此入口：
  * - NotificationListener → processNotification()
- * - AccessibilityService → processScreen()
+ * - AccessibilityService → verifyScreen()（核对模式，不入库）
  * - SmsReceiver → processSms()
  *
  * 解决的问题：
@@ -42,6 +43,9 @@ object PaymentDetector {
 
     private const val TAG = "PaymentDetector"
     private const val CHANNEL_ID = "payment_monitor"
+
+    /** 核对模式的时间窗口：屏幕支付金额与已入账记录匹配的回溯范围（±15 分钟） */
+    private const val VERIFY_WINDOW_MS = 15 * 60 * 1000L
 
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -77,6 +81,19 @@ object PaymentDetector {
         val parsed = NotificationParser.extractTransaction(content) ?: run {
             addLog("[诊断] ❌ 解析失败/被过滤: pkg=$packageName, title=${content.title}, allText=${content.allText.take(60)}")
             Log.d(TAG, "通知解析失败或被过滤: pkg=$packageName, title=${content.title}")
+            // 学习队列（支柱4）：疑似支付的通知原文存档，不再静默丢弃。
+            // 只存档带支付特征的文本（含动作词/¥金额），避免聊天类通知刷爆队列。
+            val paymentHint = listOf("支付", "付款", "收款", "转账", "红包", "退款", "扣款", "¥", "￥")
+                .any { content.allText.contains(it) }
+            if (paymentHint) {
+                LearningQueue.archive(
+                    context = context,
+                    packageName = packageName,
+                    title = content.title,
+                    text = content.allText,
+                    reason = "被过滤/未匹配模板"
+                )
+            }
             return
         }
 
@@ -96,9 +113,16 @@ object PaymentDetector {
     }
 
     /**
-     * 处理屏幕检测（Layer 2: AccessibilityService 调用）
+     * 屏幕核对（Layer 2: AccessibilityService 调用，核对模式）
+     *
+     * 双通道关系重定义（支柱4）：通知 = 发现 + 解析（主通道）；
+     * 无障碍 = 只在用户主动打开支付 App 时核对（低频辅助），不再从屏幕直接入库。
+     * 原因：屏幕文本杂乱是"乱记录"重灾区，且主动解析支付页面有风控风险。
+     *
+     * 核对逻辑：解析出屏幕支付金额后，查同金额 ±15 分钟内是否有已入账记录——
+     * 有 → 日志确认"已核对"；没有 → 提示手动补记（通知可能未送达）。
      */
-    fun processScreen(
+    fun verifyScreen(
         rootNode: AccessibilityNodeInfo,
         packageName: String,
         context: Context,
@@ -120,17 +144,26 @@ object PaymentDetector {
             return
         }
 
-        Log.d(TAG, "屏幕解析成功: pkg=$packageName, amount=${parsed.amount}, " +
-                "merchant=${parsed.merchantName}, scene=${parsed.scene}")
+        Log.d(TAG, "屏幕解析成功，进入核对: pkg=$packageName, amount=${parsed.amount}")
 
-        // 2. 委托给统一处理
-        processParsedTransaction(
-            parsed = parsed,
-            sourceType = "screen",
-            appSignature = packageName,
-            context = context,
-            detectedTime = detectedTime
-        )
+        // 2. 核对：同金额 ±15 分钟内是否有已入账记录（不写库，只核对）
+        val windowStart = detectedTime - VERIFY_WINDOW_MS
+        val app = context.applicationContext as JiYiXiaApp
+        coroutineScope.launch {
+            try {
+                val matched = app.database.recordDao()
+                    .findRecentByAmount(parsed.amount.toCents(), windowStart, detectedTime)
+                if (matched != null) {
+                    addLog("[核对] ✓ 屏幕支付¥${parsed.amount} 与已记账记录一致: pkg=$packageName")
+                    Log.d(TAG, "屏幕核对通过: amount=${parsed.amount}, pkg=$packageName")
+                } else {
+                    addLog("[核对] ⚠️ 屏幕发现支付¥${parsed.amount}，无对应记账（通知可能未送达），建议手动补记: pkg=$packageName")
+                    Log.w(TAG, "屏幕发现支付但无对应记录: amount=${parsed.amount}, pkg=$packageName")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "屏幕核对失败", e)
+            }
+        }
     }
 
     /**
@@ -276,10 +309,13 @@ object PaymentDetector {
                 val merchantLabel = if (merchantName.isNotBlank()) "·$merchantName" else ""
                 val sceneLabel = parsed.scene
 
-                // 补捞的漏单一律待确认（记到过去日期需用户点头）
-                val isPending = isBackfill || confidence < 80
+                // 补捞的漏单一律待确认（记到过去日期需用户点头）；
+                // 信号分级（支柱4）：强信号（官方模板+动作锚点齐备）自动入库，
+                // 弱信号（通用/宽松解析）一律转待确认——乱记录收敛到待确认队列，不丢不乱
+                val isStrongSignal = parsed.signal == NotificationParser.Signal.STRONG
+                val isPending = isBackfill || !isStrongSignal || confidence < 80
                 val notePrefix = when {
-                    confidence >= 80 -> "$typeLabel·$categoryName$merchantLabel"
+                    !isPending -> "$typeLabel·$categoryName$merchantLabel"
                     confidence >= 60 -> "$typeLabel·待确认·$categoryName$merchantLabel"
                     else -> "$typeLabel·待分类·$sceneLabel"
                 }

@@ -44,6 +44,7 @@ import com.jiyixia.app.service.PaymentNotificationListener
 import com.jiyixia.app.ui.theme.*
 import com.jiyixia.app.util.BackupUtil
 import com.jiyixia.app.util.CrashHandler
+import com.jiyixia.app.util.LearningQueue
 import com.jiyixia.app.util.UpdateChecker
 import com.jiyixia.app.util.toAmountNumber
 import kotlinx.coroutines.flow.first
@@ -684,6 +685,43 @@ fun SettingsScreen(
                     detections.forEach { log ->
                         Text(log, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 1.dp))
                     }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // ═══ 漏单暂存（学习队列）══════════════════════════════════════════════════
+        // 被过滤的支付类通知原文存档，不再静默丢弃——漏了什么一眼可见，手动补记后 App 学习分类映射
+        val archived = LearningQueue.getAll(context)
+        if (archived.isNotEmpty()) {
+            SectionTitle("漏单暂存")
+            SettingsCard {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        "以下支付通知未匹配模板被过滤（48 小时后自动过期）。若确认漏记，请在快速记账中手动补记。",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    archived.forEach { entry ->
+                        val timeStr = remember(entry.time) {
+                            java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+                                .format(java.util.Date(entry.time))
+                        }
+                        Text(
+                            "[$timeStr] ${entry.title}：${entry.text}（${entry.reason}）",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "清空",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { LearningQueue.clear(context) }
+                    )
                 }
             }
             Spacer(Modifier.height(8.dp))

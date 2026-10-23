@@ -46,8 +46,17 @@ object NotificationParser {
         val merchantName: String,    // 商户名（可能为空）
         val scene: String,           // 场景描述（如"微信支付"、"支付宝转账"）
         val isMarketing: Boolean,    // 是否为营销通知（应拒绝）
-        val content: NotificationContent // 原始结构化内容
+        val content: NotificationContent, // 原始结构化内容
+        val signal: Signal = Signal.WEAK // 信号强度（决定自动入库还是转待确认）
     )
+
+    /**
+     * 信号强度（支柱4：信号分级入库）
+     *
+     * STRONG = 专属模板命中（官方 title + 固定句式 + 动作锚点金额）→ 自动入库
+     * WEAK   = 通用/宽松解析命中（有金额但缺官方 title 或固定句式）→ 待确认队列
+     */
+    enum class Signal { STRONG, WEAK }
 
     /**
      * 营销通知特征词（出现这些词应拒绝识别）
@@ -247,12 +256,16 @@ object NotificationParser {
     }
 
     /**
-     * 微信支付通知解析
+     * 微信支付通知解析（支柱1：按场景分模板）
      *
-     * 模板示例：
-     * - title: "微信支付"
-     * - text: "¥38.00"
-     * - bigText: "商户：星巴克\n金额：¥38.00\n时间：2026-06-21 12:30"
+     * 微信官方账号的通知按场景分四类模板，每个模板只认自己的动作锚点：
+     * - 支付："支付¥38.00" / "已扣款38元" / "实付¥38.00"
+     * - 收款："收款¥88.00" / "到账¥88.00"（别人转给你，收入）
+     * - 转账："转账¥100.00" / "金额：¥100.00"
+     * - 红包："领取红包¥8.88"
+     * - 退款："退款金额：¥50.00"
+     *
+     * 金额只从动作词后提取，从结构上杜绝订单号/余额被误当金额。
      */
     private fun parseWeChatPay(content: NotificationContent): ParsedNotification? {
         // 微信支付的 title 必须是官方账号
@@ -261,25 +274,50 @@ object NotificationParser {
 
         // 从 bigText 或 text 提取金额（已知支付App，放宽纯数字过滤）
         val amountText = content.bigText.ifBlank { content.text }
-        val amount = extractAmountStrict(amountText, isKnownPaymentApp = true) ?: return null
+
+        // 按场景分派专属模板
+        return when {
+            content.allText.contains("退款") -> parseWeChatTemplate(
+                content, amountText, listOf("退款金额", "退款¥", "金额："), "微信退款"
+            )
+            content.allText.contains("红包") -> parseWeChatTemplate(
+                content, amountText, listOf("红包¥", "领取红包", "金额："), "微信红包"
+            )
+            content.allText.contains("转账") -> parseWeChatTemplate(
+                content, amountText, listOf("转账¥", "转账金额", "金额："), "微信转账"
+            )
+            content.allText.contains("收款") -> parseWeChatTemplate(
+                content, amountText, listOf("收款¥", "到账¥", "收款金额", "金额："), "微信收款"
+            )
+            else -> parseWeChatTemplate(
+                content, amountText,
+                listOf("支付¥", "付款¥", "实付", "扣款", "支付金额", "付款金额", "金额："),
+                "微信支付"
+            )
+        }
+    }
+
+    /** 微信专属模板解析：动作锚点优先，失败回退严格金额提取（保持旧通知格式兼容） */
+    private fun parseWeChatTemplate(
+        content: NotificationContent,
+        amountText: String,
+        anchors: List<String>,
+        scene: String
+    ): ParsedNotification? {
+        val amount = extractAmountByAnchors(amountText, anchors)
+            ?: extractAmountStrict(amountText, isKnownPaymentApp = true)
+            ?: return null
 
         // 从 bigText 提取商户名
         val merchantName = extractMerchantFromWeChat(content.bigText, content.text)
-
-        // 场景判断
-        val scene = when {
-            content.allText.contains("转账") -> "微信转账"
-            content.allText.contains("红包") -> "微信红包"
-            content.allText.contains("退款") -> "微信退款"
-            else -> "微信支付"
-        }
 
         return ParsedNotification(
             amount = amount,
             merchantName = merchantName,
             scene = scene,
             isMarketing = false,
-            content = content
+            content = content,
+            signal = Signal.STRONG
         )
     }
 
@@ -295,8 +333,12 @@ object NotificationParser {
         if (!isOfficial) return null
 
         // 支付宝的金额通常在 text 中（已知支付App，放宽纯数字过滤）
+        // 动作锚点优先："消费¥/付款¥/实付/收款¥/到账¥/退款金额"，失败回退严格提取
         val amountText = content.text.ifBlank { content.bigText }
-        val amount = extractAmountStrict(amountText, isKnownPaymentApp = true) ?: return null
+        val amount = extractAmountByAnchors(
+            amountText,
+            listOf("消费¥", "付款¥", "支付¥", "实付", "收款¥", "到账¥", "退款金额", "金额：")
+        ) ?: extractAmountStrict(amountText, isKnownPaymentApp = true) ?: return null
 
         // 从 text 提取商户名（多种格式）
         val merchantName = extractMerchantFromAlipay(content.text, content.bigText)
@@ -313,7 +355,8 @@ object NotificationParser {
             merchantName = merchantName,
             scene = scene,
             isMarketing = false,
-            content = content
+            content = content,
+            signal = Signal.STRONG
         )
     }
 
@@ -350,7 +393,8 @@ object NotificationParser {
             merchantName = merchantName,
             scene = scene,
             isMarketing = false,
-            content = content
+            content = content,
+            signal = Signal.STRONG
         )
     }
 
@@ -457,6 +501,32 @@ object NotificationParser {
     }
 
     // ═══════════════════════════════════════════════════════════
+    //  动作锚点金额提取（支柱1：从结构上杜绝订单号误匹配）
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * 动作锚点金额提取
+     *
+     * 金额必须紧跟在"支付¥/收款¥/转账¥/实付"等动作词后面才有效，
+     * 通知里其他位置的数字（订单号/余额/积分）一律不取。
+     * 多个锚点命中时取最大金额（与 extractAmountStrict 的取最大语义一致，
+     * 覆盖"红包抵扣¥0.01，实付¥38.00"场景）。
+     */
+    private fun extractAmountByAnchors(text: String, anchors: List<String>): Double? {
+        var best: Double? = null
+        for (anchor in anchors) {
+            // 锚点 + 可选冒号/空格/¥ + 数字（如"金额：¥38.00"、"已扣款 38元"）
+            val regex = Regex(Regex.escape(anchor) + """[：:\s]*[¥￥]?\s*([\d,]+(?:\.\d{1,2})?)""")
+            for (match in regex.findAll(text)) {
+                val amount = match.groupValues[1].replace(",", "").toDoubleOrNull() ?: continue
+                if (amount <= 0 || amount >= 1_000_000) continue
+                if (best == null || amount > best!!) best = amount
+            }
+        }
+        return best
+    }
+
+    // ═══════════════════════════════════════════════════════════
     //  严格金额提取（支持多种真实通知格式）
     // ═══════════════════════════════════════════════════════════
 
@@ -516,8 +586,16 @@ object NotificationParser {
                 match.range.first
             )
 
-            // 时间格式排除：如果上下文包含时间格式，跳过
-            if (Regex("""\d{4}年|\d{1,2}:\d{2}|\d{4}-\d{2}-\d{2}""").containsMatchIn(prefix)) {
+            // 时间/日期排除（精确判据）：只排除"本身就是时间或日期一部分"的候选——
+            // 紧跟冒号（12:30 的 12）、前一字节是冒号且冒号前还是数字（12:30 的 30）、
+            // 紧跟连字符（2026-06-21 的段）或"年"（2026年）。
+            // 旧版按"金额前 15 字符内出现过时间"整段误杀：银行短信
+            // "于06月21日12:30在星巴克消费人民币38.00元"的时间距真实金额仅 14 字符，
+            // 38.00 被误杀导致整条短信解析失败。
+            val nextChar = if (match.range.last + 1 < text.length) text[match.range.last + 1] else ' '
+            val prevIsTimeColon = match.range.first >= 2 &&
+                    text[match.range.first - 1] == ':' && text[match.range.first - 2].isDigit()
+            if (nextChar == ':' || nextChar == '-' || nextChar == '年' || prevIsTimeColon) {
                 continue
             }
 
