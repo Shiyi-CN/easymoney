@@ -78,6 +78,29 @@ object PaymentDetector {
         val content = NotificationParser.parse(notification, packageName)
         addLog("[诊断] 解析通知: pkg=$packageName, title=${content.title}, text=${content.text.take(30)}")
 
+        // 微信个人转账请求特殊处理：通知只显示"昵称 [转账] 请收款"，不含金额（金额只在收款页面），
+        // 通知通道无法完成记账。记录待收款状态（30 分钟有效），用户点开收款页面时
+        // 由屏幕核对通道补金额入库（详见 verifyScreen 的微信转账分支）。
+        if (packageName == "com.tencent.mm" &&
+            content.allText.contains("转账") && content.allText.contains("请收款")
+        ) {
+            val prefs = context.getSharedPreferences("auto_bookkeeping", Context.MODE_PRIVATE)
+            prefs.edit()
+                .putLong("wechat_transfer_pending_at", System.currentTimeMillis())
+                .putString("wechat_transfer_sender", content.title)
+                .apply()
+            addLog("[诊断] 💸 微信转账请求（通知不含金额）：${content.title}，收款时打开微信页面自动记账")
+            Log.d(TAG, "微信转账请求，等待收款页面补金额: sender=${content.title}")
+            LearningQueue.archive(
+                context = context,
+                packageName = packageName,
+                title = content.title,
+                text = content.allText,
+                reason = "转账通知不含金额，收款时打开微信页面自动记账"
+            )
+            return
+        }
+
         val parsed = NotificationParser.extractTransaction(content) ?: run {
             addLog("[诊断] ❌ 解析失败/被过滤: pkg=$packageName, title=${content.title}, allText=${content.allText.take(60)}")
             Log.d(TAG, "通知解析失败或被过滤: pkg=$packageName, title=${content.title}")
@@ -145,6 +168,32 @@ object PaymentDetector {
         }
 
         Log.d(TAG, "屏幕解析成功，进入核对: pkg=$packageName, amount=${parsed.amount}")
+
+        // 1.5 微信转账收款分支：此前收到"请收款"通知（不含金额，30 分钟内有效），
+        //     用户点开收款页面 → 屏幕提供金额 → 通知+屏幕双信号，转待确认入库。
+        //     这是屏幕通道唯一允许直接入库的场景（通知通道拿不到金额，别无他法）。
+        val prefs = context.getSharedPreferences("auto_bookkeeping", Context.MODE_PRIVATE)
+        val pendingAt = prefs.getLong("wechat_transfer_pending_at", 0)
+        val pageText = parsed.content.allText
+        val isTransferAcceptedPage = pageText.contains("已存入零钱") ||
+                pageText.contains("已收款") || pageText.contains("已收钱") || pageText.contains("已确认收款")
+        if (pendingAt > 0 &&
+            System.currentTimeMillis() - pendingAt < VERIFY_WINDOW_MS &&
+            isTransferAcceptedPage && parsed.amount > 0
+        ) {
+            val sender = prefs.getString("wechat_transfer_sender", "") ?: ""
+            prefs.edit().putLong("wechat_transfer_pending_at", 0).apply()
+            addLog("[诊断] 💰 微信转账收款页面 ¥${parsed.amount}（来自：$sender），通知+屏幕双信号入库")
+            Log.d(TAG, "微信转账收款入库: amount=${parsed.amount}, sender=$sender")
+            processParsedTransaction(
+                parsed = parsed.copy(scene = "微信转账", signal = NotificationParser.Signal.WEAK),
+                sourceType = "screen",
+                appSignature = packageName,
+                context = context,
+                detectedTime = detectedTime
+            )
+            return
+        }
 
         // 2. 核对：同金额 ±15 分钟内是否有已入账记录（不写库，只核对）
         val windowStart = detectedTime - VERIFY_WINDOW_MS

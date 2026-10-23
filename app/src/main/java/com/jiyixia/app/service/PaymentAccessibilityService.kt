@@ -132,7 +132,7 @@ class PaymentAccessibilityService : AccessibilityService() {
                 "支付完成", "付款完成", "转账完成", "交易完成",
                 "已支付", "已付款", "已扣款",
                 // 收款场景（别人转账给你，你点击收款）
-                "已收款", "收款成功", "已确认收款"
+                "已收款", "收款成功", "已确认收款", "已存入零钱"
             )
             val hasPaymentSuccess = paymentSuccessKeywords.any { allText.contains(it) }
             if (!hasPaymentSuccess) {
