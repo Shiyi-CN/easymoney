@@ -7,6 +7,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -32,6 +34,14 @@ class PaymentNotificationListener : NotificationListenerService() {
         private const val CHANNEL_ID = "payment_monitor"
         private const val FOREGROUND_ID = 1
 
+        /** 端到端自检通知的 id（KeepAliveWorker 发出，本服务收到即证明链路通） */
+        const val SELF_TEST_ID = 20260601
+
+        /** 最近一次收到自测通知的时间戳（0 = 从未收到） */
+        @Volatile
+        var lastSelfTestReceivedAt: Long = 0
+            private set
+
         @Volatile
         var isServiceConnected = false
             private set
@@ -42,6 +52,18 @@ class PaymentNotificationListener : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val packageName = sbn.packageName ?: return
+
+        // 自测通知：KeepAliveWorker 每 15 分钟发一条，本服务收到即证明
+        // "系统 → 通知 → 监听服务"全链路通。收到后确认并撤掉，不进解析。
+        if (sbn.id == SELF_TEST_ID && packageName == applicationContext.packageName) {
+            lastSelfTestReceivedAt = System.currentTimeMillis()
+            try {
+                getSystemService(NotificationManager::class.java)?.cancel(SELF_TEST_ID)
+            } catch (_: Exception) {
+            }
+            Log.d(TAG, "自检通知已收到，链路正常")
+            return
+        }
 
         // 只处理支付类通知
         if (!PaymentDetector.isPaymentApp(packageName)) return
@@ -76,6 +98,45 @@ class PaymentNotificationListener : NotificationListenerService() {
 
         // 启动保活服务（小米等国产ROM需要）
         KeepAliveService.start(this)
+
+        // 重连补捞：把通知栏里残留的支付通知重新处理一遍。
+        // 场景：支付发生时监听服务恰好被杀 → 通知还留在通知栏 → 系统重投递不可靠
+        // → 重连后主动捞回来补记（DedupManager 保证不重复入库）。
+        // 延迟 2 秒：onListenerConnected 刚回调时通知列表可能尚未就绪。
+        Handler(Looper.getMainLooper()).postDelayed({
+            backfillActiveNotifications()
+        }, 2_000)
+    }
+
+    /**
+     * 补捞通知栏里残留的支付通知。
+     * 非当天的漏单转"待确认"（allowBackfill = true），由用户决定是否记账。
+     */
+    private fun backfillActiveNotifications() {
+        try {
+            val actives = activeNotifications ?: return
+            var recovered = 0
+            for (sbn in actives) {
+                val pkg = sbn.packageName ?: continue
+                if (!PaymentDetector.isPaymentApp(pkg)) continue
+                val notification = sbn.notification ?: continue
+                val when0 = notification.`when`?.takeIf { it > 0 }
+                    ?: System.currentTimeMillis()
+                PaymentDetector.processNotification(
+                    notification = notification,
+                    packageName = pkg,
+                    context = applicationContext,
+                    detectedTime = when0,
+                    allowBackfill = true
+                )
+                recovered++
+            }
+            if (recovered > 0) {
+                Log.i(TAG, "重连补捞完成，处理了 $recovered 条残留支付通知")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "重连补捞失败", e)
+        }
     }
 
     override fun onListenerDisconnected() {

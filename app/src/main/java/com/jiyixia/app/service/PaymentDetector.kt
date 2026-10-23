@@ -60,7 +60,8 @@ object PaymentDetector {
         notification: Notification,
         packageName: String,
         context: Context,
-        detectedTime: Long = System.currentTimeMillis()
+        detectedTime: Long = System.currentTimeMillis(),
+        allowBackfill: Boolean = false
     ) {
         addLog("[诊断] 收到通知: pkg=$packageName")
 
@@ -89,7 +90,8 @@ object PaymentDetector {
             sourceType = "notification",
             appSignature = packageName,
             context = context,
-            detectedTime = detectedTime
+            detectedTime = detectedTime,
+            allowBackfill = allowBackfill
         )
     }
 
@@ -107,7 +109,14 @@ object PaymentDetector {
         // 1. 结构化解析屏幕
         val content = ScreenParser.parse(rootNode, packageName)
         val parsed = ScreenParser.extractTransaction(content) ?: run {
-            Log.d(TAG, "屏幕解析失败或被过滤: pkg=$packageName")
+            // 区分两种失败：节点树里根本没有文本（App 自绘/屏蔽了无障碍内容）
+            // vs 有文本但不是支付成功页。前者是"屏蔽"，只能靠通知/短信通道兜底。
+            if (content.textBlocks.isEmpty()) {
+                addLog("[诊断] ⚠️ 屏幕无可读文本，可能被App屏蔽或自绘UI: pkg=$packageName")
+                Log.w(TAG, "屏幕无可读文本（可能被屏蔽/自绘UI）: pkg=$packageName")
+            } else {
+                Log.d(TAG, "屏幕解析失败或被过滤: pkg=$packageName")
+            }
             return
         }
 
@@ -172,7 +181,8 @@ object PaymentDetector {
         sourceType: String,
         appSignature: String,
         context: Context,
-        detectedTime: Long
+        detectedTime: Long,
+        allowBackfill: Boolean = false
     ) {
         val amount = parsed.amount
         if (amount <= 0) {
@@ -180,13 +190,20 @@ object PaymentDetector {
             return
         }
 
-        // 0. 只记当天的：检测时间不是今天的直接跳过
-        //    场景：监听服务重连时，系统会把通知栏里残留的旧通知重新投递过来（notification.when
-        //    是过去的时间），若不拦截会生成过去日期的记录（用户视为"补记漏记"，产品上不允许）。
+        // 0. 只记当天：检测时间不是今天的默认跳过
+        //    场景：系统重新投递通知栏残留旧通知，若不拦截会生成过去日期的记录。
+        //    例外：补捞模式（allowBackfill，重连后从通知栏捞回的支付通知）不再静默丢弃，
+        //    而是强制转"待确认"入库——把"记到过去日期"的选择权交给用户，漏单不再永久丢失。
+        var isBackfill = false
         if (!isToday(detectedTime)) {
-            addLog("[诊断] ⏭️ 非当天检测，跳过（只记当天）: source=$sourceType, app=$appSignature")
-            Log.d(TAG, "非当天检测，跳过: source=$sourceType, app=$appSignature")
-            return
+            if (!allowBackfill) {
+                addLog("[诊断] ⏭️ 非当天检测，跳过（只记当天）: source=$sourceType, app=$appSignature")
+                Log.d(TAG, "非当天检测，跳过: source=$sourceType, app=$appSignature")
+                return
+            }
+            isBackfill = true
+            addLog("[诊断] 🔁 补捞非当天通知，转待确认: source=$sourceType, app=$appSignature")
+            Log.d(TAG, "补捞非当天通知，转待确认: source=$sourceType, app=$appSignature")
         }
 
         // 1. 智能去重
@@ -259,7 +276,8 @@ object PaymentDetector {
                 val merchantLabel = if (merchantName.isNotBlank()) "·$merchantName" else ""
                 val sceneLabel = parsed.scene
 
-                val isPending = confidence < 80
+                // 补捞的漏单一律待确认（记到过去日期需用户点头）
+                val isPending = isBackfill || confidence < 80
                 val notePrefix = when {
                     confidence >= 80 -> "$typeLabel·$categoryName$merchantLabel"
                     confidence >= 60 -> "$typeLabel·待确认·$categoryName$merchantLabel"
